@@ -3059,10 +3059,9 @@ const Banana = (() => {
     // check upgrade clicks (right panel)
     if (cx > W * 0.58) {
       const panelX = W * 0.6;
-      const panelY = 90 - shopScroll;
       for (let i = 0; i < UPGRADES.length; i++) {
-        const uy = panelY + i * 52;
-        if (uy < 60 || uy > H - 20) continue;
+        const uy = 55 + i * 52 - shopScroll; // matches draw position
+        if (uy < 20 || uy > H) continue;
         if (cy > uy && cy < uy + 48 && cx > panelX && cx < panelX + W * 0.37) {
           const upg = UPGRADES[i];
           const cost = getCost(upg);
