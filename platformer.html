@@ -769,6 +769,52 @@ const CHUNKS = [
     c.push({ x: startX + w/2, y: y - 70, r: 8, collected: false });
     return { platforms: p, enemies: e, coins: c, powerups: pw, endX: startX + w, endY: y };
   },
+  // Golem arena (unkillable, stunnable)
+  function(startX, startY, diff) {
+    const p = [], e = [], c = [], pw = [];
+    let y = Math.min(startY, H - 60);
+    const w = 280 + diff * 30;
+    p.push({ x: startX, y, w, h: 20 });
+    e.push({ x: startX + w/2, y: y - 38, w: 32, h: 34, type: 'golem',
+             originX: startX + 20, rangeW: w - 40, speed: 0.5 + diff * 0.15, dir: 1,
+             stunTimer: 0, stunDuration: 90 });
+    c.push({ x: startX + w * 0.3, y: y - 50, r: 8, collected: false });
+    c.push({ x: startX + w * 0.7, y: y - 50, r: 8, collected: false });
+    return { platforms: p, enemies: e, coins: c, powerups: pw, endX: startX + w, endY: y };
+  },
+  // Apple Pirate perch
+  function(startX, startY, diff) {
+    const p = [], e = [], c = [], pw = [];
+    let y = Math.min(startY, H - 60);
+    // ground platform
+    p.push({ x: startX, y, w: 320, h: 20 });
+    // raised platform for pirate
+    p.push({ x: startX + 100, y: y - 80, w: 120, h: 14 });
+    e.push({ x: startX + 140, y: y - 80 - 32, w: 28, h: 28, type: 'apple_pirate',
+             originX: startX + 110, rangeW: 100, speed: 0.6, dir: 1,
+             throwTimer: 0, throwRate: 80 + Math.floor(40 / diff) });
+    c.push({ x: startX + 60, y: y - 40, r: 8, collected: false });
+    c.push({ x: startX + 260, y: y - 40, r: 8, collected: false });
+    return { platforms: p, enemies: e, coins: c, powerups: pw, endX: startX + 320, endY: y };
+  },
+  // Dasher gauntlet
+  function(startX, startY, diff) {
+    const p = [], e = [], c = [], pw = [];
+    let y = Math.min(startY, H - 60);
+    const w = 350 + diff * 30;
+    p.push({ x: startX, y, w, h: 20 });
+    // 1-2 dashers
+    const count = diff >= 3 ? 2 : 1;
+    for (let i = 0; i < count; i++) {
+      const ex = startX + 80 + i * 150;
+      e.push({ x: ex, y: y - 28, w: 24, h: 24, type: 'dasher',
+               originX: startX + 20, rangeW: w - 40, speed: 1.2, dir: i % 2 === 0 ? 1 : -1,
+               dashSpeed: 6 + diff, dashTimer: 0, dashCooldown: 60 + Math.floor(30 / diff),
+               isDashing: false, dashDuration: 20, dashDir: 0 });
+    }
+    c.push({ x: startX + w/2, y: y - 60, r: 8, collected: false });
+    return { platforms: p, enemies: e, coins: c, powerups: pw, endX: startX + w, endY: y };
+  },
 ];
 
 function generateLevel(levelNum) {
@@ -856,8 +902,16 @@ function makePlayer() {
     hasBananaGun: false,
     // among us crewmate skin
     isCrewmate: false,
+    // stickman mode
+    isStickman: false,
+    stickColor: '#000',
+    stickRainbow: false,
+    stickSwing: 0, // melee attack timer
   };
 }
+
+// barrel projectiles (from apple pirate enemies)
+let BARRELS = [];
 
 function initGame() {
   currentLevel = 1;
@@ -875,6 +929,8 @@ function startLevel(num) {
   if (num > 1) { player.hasDoubleJump = true; player.hasDash = true; }
   if (Banana.hasBananaGun()) player.hasBananaGun = true;
   if (imposterActive) player.isCrewmate = true;
+  if (sticcActive) { player.isStickman = true; player.stickColor = sticcColor; player.stickRainbow = sticcRainbow; }
+  BARRELS = [];
   camera = { x: 0 };
   state = 'playing';
   deathTimer = 0;
@@ -1214,6 +1270,60 @@ function update() {
     if (e.type === 'flyer') {
       e.x = e.originX + Math.sin(t * e.flySpeed + e.flyOffset) * e.flyRangeX;
       e.y = e.originY + Math.cos(t * e.flySpeed * 0.7 + e.flyOffset) * e.flyRangeY;
+    } else if (e.type === 'golem') {
+      // golem: stunnable but unkillable, walks when not stunned
+      if (e.stunTimer > 0) {
+        e.stunTimer--;
+      } else {
+        e.x += e.speed * e.dir;
+        if (e.x <= e.originX || e.x + e.w >= e.originX + e.rangeW) e.dir *= -1;
+      }
+    } else if (e.type === 'apple_pirate') {
+      // apple pirate: walks on platform, throws barrels at player
+      e.x += e.speed * e.dir;
+      if (e.x <= e.originX || e.x + e.w >= e.originX + e.rangeW) e.dir *= -1;
+      e.throwTimer++;
+      if (e.throwTimer >= e.throwRate && Math.abs(e.x - player.x) < 500) {
+        e.throwTimer = 0;
+        const dx = player.x - e.x;
+        const isExplosive = Math.random() < 0.3; // 30% chance explosive
+        BARRELS.push({
+          x: e.x + e.w/2, y: e.y,
+          vx: Math.sign(dx) * (3 + Math.random() * 2),
+          vy: -4 - Math.random() * 2,
+          w: 14, h: 14,
+          explosive: isExplosive,
+          grounded: false,
+          life: 200,
+          angle: 0,
+        });
+        playSound('jump');
+      }
+    } else if (e.type === 'dasher') {
+      // dasher: patrols, then dashes at player when in range
+      if (e.isDashing) {
+        e.x += e.dashDir * e.dashSpeed;
+        e.dashTimer--;
+        if (e.dashTimer <= 0) {
+          e.isDashing = false;
+          e.dashTimer = e.dashCooldown;
+        }
+        // clamp to range
+        if (e.x < e.originX) { e.x = e.originX; e.isDashing = false; e.dashTimer = e.dashCooldown; }
+        if (e.x + e.w > e.originX + e.rangeW) { e.x = e.originX + e.rangeW - e.w; e.isDashing = false; e.dashTimer = e.dashCooldown; }
+      } else {
+        e.dashTimer--;
+        // patrol slowly
+        e.x += e.speed * e.dir * 0.5;
+        if (e.x <= e.originX || e.x + e.w >= e.originX + e.rangeW) e.dir *= -1;
+        // dash at player when in range and cooldown is done
+        if (e.dashTimer <= 0 && Math.abs(e.x - player.x) < 250 && Math.abs(e.y - player.y) < 60) {
+          e.isDashing = true;
+          e.dashDir = player.x > e.x ? 1 : -1;
+          e.dashTimer = e.dashDuration;
+          playSound('jump');
+        }
+      }
     } else {
       e.x += e.speed * e.dir;
       if (e.x <= e.originX || e.x + e.w >= e.originX + e.rangeW) e.dir *= -1;
@@ -1223,7 +1333,16 @@ function update() {
       const stompCheck = player.vy > 0 && player.y + player.h - e.y < 18;
 
       if (stompCheck || player.dashing) {
-        if (e.type === 'shielded' && e.hp > 1 && !player.dashing) {
+        if (e.type === 'golem') {
+          // can't kill golem, only stun
+          e.stunTimer = e.stunDuration;
+          player.vy = JUMP_FORCE * 0.7;
+          playSound('stomp');
+          triggerShake(6, 10);
+          spawnParticles(e.x + e.w/2, e.y, 8, '#888', { spread: 4, life: 15 });
+          spawnFloatingText(e.x + e.w/2, e.y - 10, 'STUNNED!', '#ffaa00');
+          score += 50;
+        } else if (e.type === 'shielded' && e.hp > 1 && !player.dashing) {
           e.hp--;
           player.vy = JUMP_FORCE * 0.6;
           playSound('stomp');
@@ -1239,11 +1358,14 @@ function update() {
           score += pts;
           playSound('stomp');
           triggerShake(4, 6);
-          spawnParticles(e.x + e.w/2, e.y + e.h/2, 12, e.type === 'flyer' ? '#e74c3c' : '#9b59b6', { spread: 5, life: 20, gravity: 0.15 });
+          spawnParticles(e.x + e.w/2, e.y + e.h/2, 12, e.type === 'flyer' ? '#e74c3c' : e.type === 'dasher' ? '#e67e22' : e.type === 'apple_pirate' ? '#27ae60' : '#9b59b6', { spread: 5, life: 20, gravity: 0.15 });
           if (comboCount > 1) spawnFloatingText(e.x + e.w/2, e.y - 10, comboCount + 'x COMBO! +' + pts, '#ff0');
           else spawnFloatingText(e.x + e.w/2, e.y - 10, '+' + pts, '#fff');
           updateUI();
         }
+      } else if (e.type === 'golem' && e.stunTimer > 0) {
+        // touching stunned golem is safe — just push player away
+        player.x += player.x < e.x ? -3 : 3;
       } else {
         lives--;
         deathTimer = 40;
@@ -1253,6 +1375,63 @@ function update() {
         updateUI();
         return;
       }
+    }
+  }
+
+  // --- barrel update ---
+  for (let i = BARRELS.length - 1; i >= 0; i--) {
+    const b = BARRELS[i];
+    b.x += b.vx;
+    b.vy += 0.35; // gravity
+    b.y += b.vy;
+    b.angle += b.vx * 0.08;
+    b.life--;
+
+    // barrel hits ground — bounce or roll
+    for (const p of level.platforms) {
+      if (b.x > p.x && b.x < p.x + p.w && b.y + b.h/2 > p.y && b.y < p.y + p.h) {
+        b.y = p.y - b.h/2;
+        if (Math.abs(b.vy) > 2) {
+          b.vy = -b.vy * 0.4;
+        } else {
+          b.vy = 0;
+          b.grounded = true;
+          b.vx *= 0.95; // friction
+        }
+      }
+    }
+
+    // barrel hits player
+    if (Math.abs(b.x - (player.x + player.w/2)) < 16 && Math.abs(b.y - (player.y + player.h/2)) < 20) {
+      if (b.explosive) {
+        triggerShake(8, 15);
+        spawnParticles(b.x, b.y, 20, '#ff4400', { spread: 8, life: 20, gravity: 0.1 });
+        spawnParticles(b.x, b.y, 10, '#ffd700', { spread: 6, life: 15, gravity: 0.05 });
+        playSound('break');
+      }
+      lives--;
+      deathTimer = 40;
+      playSound('hurt');
+      triggerShake(5, 10);
+      spawnParticles(player.x + player.w/2, player.y + player.h/2, 8, '#e94560', { spread: 4, life: 15 });
+      BARRELS.splice(i, 1);
+      updateUI();
+      return;
+    }
+
+    // stickman melee can destroy barrels
+    if (player.isStickman && player.stickSwing > 0) {
+      const sx = player.x + (player.facing > 0 ? player.w : -30);
+      if (Math.abs(b.x - sx - 15) < 25 && Math.abs(b.y - (player.y + player.h/2)) < 25) {
+        spawnParticles(b.x, b.y, 6, '#8B4513', { spread: 4, life: 12 });
+        playSound('stomp');
+        BARRELS.splice(i, 1);
+        continue;
+      }
+    }
+
+    if (b.life <= 0 || b.y > H + 50) {
+      BARRELS.splice(i, 1);
     }
   }
 
@@ -1624,7 +1803,11 @@ function drawCrewmate() {
 function drawPlayer() {
   if (deathTimer > 0 && deathTimer % 4 < 2) return;
 
-  // Use crewmate renderer if IMPOSTER mode is active
+  // Use alternate renderer for easter egg skins
+  if (player.isStickman) {
+    drawStickman();
+    return;
+  }
   if (player.isCrewmate) {
     drawCrewmate();
     return;
@@ -1772,6 +1955,158 @@ function drawEnemies() {
       ctx.fillStyle = '#e74c3c';
       ctx.fillRect(sx + 7, e.y + 12, 3, 3);
       ctx.fillRect(sx + 19, e.y + 12, 3, 3);
+    } else if (e.type === 'golem') {
+      // golem: big rocky unkillable enemy
+      const stunned = e.stunTimer > 0;
+      const shake = stunned ? (Math.random() - 0.5) * 2 : 0;
+      const bob = stunned ? 0 : Math.sin(performance.now() * 0.003 + e.x) * 1;
+
+      // body
+      ctx.fillStyle = stunned ? '#666' : '#555';
+      ctx.fillRect(sx + shake, e.y + bob, e.w, e.h);
+      // rocky texture
+      ctx.fillStyle = stunned ? '#777' : '#6a6a6a';
+      ctx.fillRect(sx + 4 + shake, e.y + 4 + bob, 8, 6);
+      ctx.fillRect(sx + 18 + shake, e.y + 12 + bob, 10, 8);
+      ctx.fillRect(sx + 6 + shake, e.y + 20 + bob, 6, 5);
+      // glowing cracks
+      ctx.fillStyle = stunned ? '#ff440066' : '#ff660044';
+      ctx.fillRect(sx + 2 + shake, e.y + 10 + bob, e.w - 4, 2);
+      ctx.fillRect(sx + 10 + shake, e.y + 6 + bob, 2, 22);
+      // angry eyes
+      ctx.fillStyle = stunned ? '#ff440088' : '#ff4400';
+      ctx.fillRect(sx + 6 + shake, e.y + 8 + bob, 6, 5);
+      ctx.fillRect(sx + 20 + shake, e.y + 8 + bob, 6, 5);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(sx + 8 + shake, e.y + 9 + bob, 2, 3);
+      ctx.fillRect(sx + 22 + shake, e.y + 9 + bob, 2, 3);
+      // stun stars
+      if (stunned) {
+        const starT = performance.now() * 0.008;
+        for (let s = 0; s < 3; s++) {
+          const sa = starT + s * 2.1;
+          const starX = sx + e.w/2 + Math.cos(sa) * 18;
+          const starY = e.y - 8 + Math.sin(sa) * 5;
+          ctx.fillStyle = '#ffd700';
+          ctx.font = '10px monospace';
+          ctx.fillText('★', starX, starY);
+        }
+      }
+      // "UNKILLABLE" indicator
+      ctx.fillStyle = '#ff440088';
+      ctx.fillRect(sx + shake, e.y - 3 + bob, e.w, 2);
+    } else if (e.type === 'apple_pirate') {
+      // evil apple pirate
+      const bob = Math.sin(performance.now() * 0.005 + e.x) * 1;
+
+      // apple body (green)
+      ctx.fillStyle = '#27ae60';
+      ctx.beginPath();
+      ctx.ellipse(sx + e.w/2, e.y + e.h/2 + bob, e.w/2 + 2, e.h/2 + 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // apple highlight
+      ctx.fillStyle = '#2ecc7133';
+      ctx.beginPath();
+      ctx.ellipse(sx + e.w/2 - 4, e.y + e.h/3 + bob, 5, 7, -0.3, 0, Math.PI * 2);
+      ctx.fill();
+      // stem
+      ctx.strokeStyle = '#5a3a20';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sx + e.w/2, e.y + bob);
+      ctx.lineTo(sx + e.w/2 + 3, e.y - 8 + bob);
+      ctx.stroke();
+      // leaf
+      ctx.fillStyle = '#1a8040';
+      ctx.beginPath();
+      ctx.ellipse(sx + e.w/2 + 5, e.y - 5 + bob, 5, 3, 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      // pirate eye patch
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(sx + 5, e.y + 9 + bob, 8, 7);
+      ctx.strokeStyle = '#1a1a1a';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(sx + 13, e.y + 12 + bob);
+      ctx.lineTo(sx + e.w - 2, e.y + 8 + bob);
+      ctx.stroke();
+      // good eye
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(sx + 16, e.y + 10 + bob, 6, 5);
+      ctx.fillStyle = '#e74c3c';
+      ctx.fillRect(sx + 18, e.y + 11 + bob, 3, 3);
+      // mean grin
+      ctx.strokeStyle = '#1a1a1a';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(sx + 8, e.y + 20 + bob);
+      ctx.quadraticCurveTo(sx + e.w/2, e.y + 24 + bob, sx + 20, e.y + 18 + bob);
+      ctx.stroke();
+      // pirate hat (triangle)
+      ctx.fillStyle = '#1a1a1a';
+      ctx.beginPath();
+      ctx.moveTo(sx - 2, e.y + 2 + bob);
+      ctx.lineTo(sx + e.w/2, e.y - 14 + bob);
+      ctx.lineTo(sx + e.w + 2, e.y + 2 + bob);
+      ctx.closePath();
+      ctx.fill();
+      // skull on hat
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(sx + e.w/2, e.y - 5 + bob, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(sx + e.w/2 - 2, e.y - 6 + bob, 1.5, 1.5);
+      ctx.fillRect(sx + e.w/2 + 1, e.y - 6 + bob, 1.5, 1.5);
+    } else if (e.type === 'dasher') {
+      // dasher enemy — sleek, fast
+      const isDashing = e.isDashing;
+      const bob = isDashing ? 0 : Math.sin(performance.now() * 0.006 + e.x) * 1.5;
+
+      // dash trail
+      if (isDashing) {
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = '#e67e22';
+        for (let tr = 1; tr <= 3; tr++) {
+          ctx.fillRect(sx - e.dashDir * tr * 8, e.y + 2, e.w, e.h - 4);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // body (wedge shape for speed)
+      ctx.fillStyle = isDashing ? '#f39c12' : '#e67e22';
+      ctx.beginPath();
+      const dir = e.dashDir || e.dir;
+      ctx.moveTo(sx + (dir > 0 ? e.w + 4 : -4), e.y + e.h/2 + bob);
+      ctx.lineTo(sx + (dir > 0 ? -2 : e.w + 2), e.y + bob);
+      ctx.lineTo(sx + (dir > 0 ? -2 : e.w + 2), e.y + e.h + bob);
+      ctx.closePath();
+      ctx.fill();
+      // eye
+      const eyeX = dir > 0 ? sx + e.w - 8 : sx + 4;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(eyeX, e.y + 7 + bob, 5, 5);
+      ctx.fillStyle = '#c0392b';
+      ctx.fillRect(eyeX + 1, e.y + 8 + bob, 3, 3);
+      // speed lines when dashing
+      if (isDashing) {
+        ctx.strokeStyle = '#f39c1288';
+        ctx.lineWidth = 1;
+        for (let l = 0; l < 3; l++) {
+          const ly = e.y + 4 + l * 8;
+          ctx.beginPath();
+          ctx.moveTo(sx - e.dashDir * 20, ly);
+          ctx.lineTo(sx - e.dashDir * 40 - l * 5, ly);
+          ctx.stroke();
+        }
+      }
+      // exclamation when about to dash
+      if (!isDashing && e.dashTimer < 15 && e.dashTimer > 0) {
+        ctx.fillStyle = '#e74c3c';
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('!', sx + e.w/2, e.y - 10);
+      }
     } else {
       // walker
       const bob = Math.sin(performance.now() * 0.005 + e.x) * 1.5;
@@ -1799,6 +2134,29 @@ function drawEnemies() {
       ctx.fillRect(sx + 2, e.y + e.h + bob, 6, 4 + footAnim);
       ctx.fillRect(sx + e.w - 8, e.y + e.h + bob, 6, 4 - footAnim);
     }
+  }
+
+  // draw barrels
+  for (const b of BARRELS) {
+    const bsx = b.x - camera.x;
+    ctx.save();
+    ctx.translate(bsx, b.y);
+    ctx.rotate(b.angle);
+    // barrel body
+    ctx.fillStyle = b.explosive ? '#c0392b' : '#8B4513';
+    ctx.fillRect(-b.w/2, -b.h/2, b.w, b.h);
+    // bands
+    ctx.fillStyle = b.explosive ? '#e74c3c' : '#a0522d';
+    ctx.fillRect(-b.w/2, -b.h/2 + 2, b.w, 3);
+    ctx.fillRect(-b.w/2, b.h/2 - 5, b.w, 3);
+    // explosive marker
+    if (b.explosive) {
+      ctx.fillStyle = '#ffd700';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('✱', 0, 4);
+    }
+    ctx.restore();
   }
 }
 
@@ -3485,6 +3843,244 @@ function checkImposterSecret(e) {
   }
 }
 
+// STICC easter egg - Stickman mode with melee weapon
+const STICC_CODE = 'sticc';
+let sticcBuffer = '';
+let sticcActive = false;
+let sticcColor = '#000';
+let sticcRainbow = false;
+const STICK_COLORS = ['#e94560','#3a86ff','#4ecca3','#ff6b35','#9b59b6','#f1c40f','#e74c3c','#1abc9c','#e67e22','#2ecc71'];
+
+function checkSticcSecret(e) {
+  if (Banana.isActive()) return;
+  if (state !== 'playing') return;
+  const k = e.key.toLowerCase();
+  if (k.length === 1 && k >= 'a' && k <= 'z') {
+    sticcBuffer += k;
+    if (sticcBuffer.length > 20) sticcBuffer = sticcBuffer.slice(-20);
+    if (sticcBuffer.endsWith(STICC_CODE)) {
+      sticcActive = !sticcActive;
+      player.isStickman = sticcActive;
+      player.isCrewmate = false;
+      imposterActive = false;
+      if (sticcActive) {
+        // random color, 25% rainbow
+        sticcRainbow = Math.random() < 0.25;
+        sticcColor = sticcRainbow ? '#fff' : STICK_COLORS[Math.floor(Math.random() * STICK_COLORS.length)];
+        player.stickRainbow = sticcRainbow;
+        player.stickColor = sticcColor;
+        triggerShake(6, 12);
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, 25, player.stickColor, { spread: 7, life: 25, gravity: 0.05 });
+        spawnFloatingText(player.x + player.w/2, player.y - 20, player.stickRainbow ? '🌈 RAINBOW STICC!' : '🦯 STICC MODE!', player.stickColor);
+        playSound('powerup');
+      } else {
+        spawnFloatingText(player.x + player.w/2, player.y - 20, 'UN-STICC\'D', '#fff');
+        playSound('hurt');
+      }
+      sticcBuffer = '';
+    }
+  }
+}
+
+// draw Alan Becker-style stickman
+function drawStickman() {
+  if (deathTimer > 0 && deathTimer % 4 < 2) return;
+  const sx = player.x - camera.x;
+  const sy = player.y;
+  const t = performance.now() * 0.001;
+
+  // dash trail
+  for (const tr of player.trail) {
+    const alpha = tr.life / 10;
+    ctx.globalAlpha = alpha * 0.3;
+    ctx.strokeStyle = player.stickColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(tr.x - camera.x + player.w/2, tr.y + 8, 5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.save();
+  const cx = sx + player.w / 2;
+  const cy = sy + player.h / 2;
+  ctx.translate(cx, cy);
+  ctx.scale(player.facing * player.scaleX, player.scaleY);
+
+  // get color (rainbow cycles hue)
+  let col = player.stickColor;
+  if (player.stickRainbow) {
+    const hue = (t * 120) % 360;
+    col = `hsl(${hue}, 90%, 55%)`;
+  }
+
+  ctx.strokeStyle = col;
+  ctx.fillStyle = col;
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // Alan Becker style: circle head, thin limbs, expressive poses
+  const headR = 5;
+  const headY = -player.h/2 + headR + 1;
+  const bodyTop = headY + headR;
+  const bodyBot = player.h/2 - 6;
+  const bodyLen = bodyBot - bodyTop;
+
+  // --- HEAD (circle, not filled — outline only like Alan Becker) ---
+  ctx.beginPath();
+  ctx.arc(0, headY, headR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- BODY (single line) ---
+  ctx.beginPath();
+  ctx.moveTo(0, bodyTop);
+  ctx.lineTo(0, bodyBot);
+  ctx.stroke();
+
+  // --- LEGS ---
+  const legLen = 10;
+  if (player.wallSliding) {
+    // legs pressed against wall
+    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(-4, bodyBot + legLen); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(-2, bodyBot + legLen - 2); ctx.stroke();
+  } else if (player.dashing) {
+    // legs trailing behind
+    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(-8, bodyBot + 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(-6, bodyBot + 8); ctx.stroke();
+  } else if (player.grounded && Math.abs(player.vx) > 0.5) {
+    // running — animated legs
+    const legPhase = t * 10;
+    const l1 = Math.sin(legPhase) * 8;
+    const l2 = Math.sin(legPhase + Math.PI) * 8;
+    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(l1, bodyBot + legLen); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(l2, bodyBot + legLen); ctx.stroke();
+  } else if (!player.grounded) {
+    // jumping — legs bent
+    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(-5, bodyBot + 3); ctx.lineTo(-3, bodyBot + legLen); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(4, bodyBot + 4); ctx.lineTo(5, bodyBot + legLen); ctx.stroke();
+  } else {
+    // idle — standing
+    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(-4, bodyBot + legLen); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(4, bodyBot + legLen); ctx.stroke();
+  }
+
+  // --- ARMS ---
+  const armY = bodyTop + bodyLen * 0.25;
+  const armLen = 9;
+
+  if (player.stickSwing > 0) {
+    // swinging stick weapon — arm forward
+    const swingAngle = (1 - player.stickSwing / 12) * Math.PI * 0.8 - 0.4;
+    // weapon arm
+    const ax = Math.cos(swingAngle) * armLen;
+    const ay = Math.sin(swingAngle) * armLen;
+    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(ax, armY + ay); ctx.stroke();
+    // stick weapon extending from hand
+    ctx.strokeStyle = '#8B6914';
+    ctx.lineWidth = 3;
+    const stickLen = 20;
+    ctx.beginPath();
+    ctx.moveTo(ax, armY + ay);
+    ctx.lineTo(ax + Math.cos(swingAngle) * stickLen, armY + ay + Math.sin(swingAngle) * stickLen);
+    ctx.stroke();
+    // stick details — bark lines
+    ctx.strokeStyle = '#6B4F12';
+    ctx.lineWidth = 1;
+    const mid = stickLen * 0.5;
+    ctx.beginPath();
+    ctx.moveTo(ax + Math.cos(swingAngle) * mid - 1, armY + ay + Math.sin(swingAngle) * mid);
+    ctx.lineTo(ax + Math.cos(swingAngle) * (mid + 3), armY + ay + Math.sin(swingAngle) * (mid + 3) - 2);
+    ctx.stroke();
+    // knot
+    ctx.fillStyle = '#5a3e10';
+    ctx.beginPath();
+    ctx.arc(ax + Math.cos(swingAngle) * stickLen * 0.7, armY + ay + Math.sin(swingAngle) * stickLen * 0.7, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2.5;
+    // other arm back
+    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(-armLen, armY + 3); ctx.stroke();
+  } else if (player.dashing) {
+    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(armLen + 4, armY - 3); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(-armLen, armY + 2); ctx.stroke();
+  } else if (!player.grounded) {
+    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(-armLen, armY - 6); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(armLen, armY - 4); ctx.stroke();
+  } else if (Math.abs(player.vx) > 0.5) {
+    const armPhase = t * 10;
+    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(Math.sin(armPhase) * 6, armY + Math.cos(armPhase) * 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(Math.sin(armPhase + Math.PI) * 6, armY + Math.cos(armPhase + Math.PI) * 4); ctx.stroke();
+  } else {
+    // idle — arms slightly down, holding stick loosely
+    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(-armLen, armY + 5); ctx.stroke();
+    // stick weapon at rest in right hand
+    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(armLen - 2, armY + 4); ctx.stroke();
+    ctx.strokeStyle = '#8B6914';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(armLen - 2, armY + 4);
+    ctx.lineTo(armLen + 8, armY + 14);
+    ctx.stroke();
+    // bark detail
+    ctx.strokeStyle = '#6B4F12';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(armLen + 2, armY + 8);
+    ctx.lineTo(armLen + 4, armY + 7);
+    ctx.stroke();
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2.5;
+  }
+
+  // double jump halo
+  if (player.hasDoubleJump && !player.usedDoubleJump && !player.grounded) {
+    ctx.strokeStyle = '#ffd70066';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, player.h/2 + 4, 12, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// stickman melee attack — hits enemies in range
+function updateStickmanMelee() {
+  if (!player.isStickman) return;
+  if (player.stickSwing > 0) {
+    player.stickSwing--;
+    // hit enemies during swing
+    if (player.stickSwing === 6) { // mid-swing
+      const hitX = player.x + (player.facing > 0 ? player.w : -25);
+      const hitY = player.y + player.h * 0.3;
+      for (const e of level.enemies) {
+        if (e.dead) continue;
+        if (Math.abs((e.x + e.w/2) - (hitX + 12)) < 30 && Math.abs((e.y + e.h/2) - hitY) < 25) {
+          if (e.type === 'golem') {
+            e.stunTimer = e.stunDuration;
+            playSound('stomp');
+            triggerShake(4, 8);
+            spawnParticles(e.x + e.w/2, e.y + e.h/2, 6, '#888', { spread: 4, life: 12 });
+            spawnFloatingText(e.x + e.w/2, e.y - 10, 'BONK!', '#ffaa00');
+            score += 50;
+          } else {
+            e.dead = true;
+            comboCount++;
+            comboTimer = 60;
+            const pts = 100 * comboCount;
+            score += pts;
+            playSound('stomp');
+            triggerShake(3, 5);
+            spawnParticles(e.x + e.w/2, e.y + e.h/2, 10, '#8B6914', { spread: 5, life: 15, gravity: 0.1 });
+            spawnFloatingText(e.x + e.w/2, e.y - 10, '+' + pts, '#fff');
+          }
+        }
+      }
+    }
+  }
+}
+
 // Override keydown to catch banana secret + gun + banana screen controls
 const origKeydown = window.onkeydown;
 window.addEventListener('keydown', e => {
@@ -3492,6 +4088,7 @@ window.addEventListener('keydown', e => {
   if (!Banana.isActive() && state === 'playing') {
     Banana.checkSecret(e.code);
     checkImposterSecret(e);
+    checkSticcSecret(e);
   }
 
   // banana screen controls
@@ -3508,6 +4105,11 @@ window.addEventListener('keydown', e => {
   // banana gun fire (X or F key)
   if ((e.code === 'KeyX' || e.code === 'KeyF') && player.hasBananaGun && state === 'playing') {
     fireBananaGun();
+  }
+  // stickman melee attack (X or F key)
+  if ((e.code === 'KeyX' || e.code === 'KeyF') && player.isStickman && player.stickSwing <= 0 && state === 'playing') {
+    player.stickSwing = 12;
+    playSound('jump');
   }
 });
 
@@ -3863,6 +4465,7 @@ function loop() {
   } else {
     update();
     updateBananaBullets();
+    updateStickmanMelee();
     draw();
   }
   requestAnimationFrame(loop);
