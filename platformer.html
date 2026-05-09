@@ -926,14 +926,18 @@ function update() {
   // combo decay
   if (comboTimer > 0) { comboTimer--; } else { comboCount = 0; }
 
-  // --- update moving platforms ---
+  // --- update moving platforms (store prev position for sticky carry) ---
   for (const p of level.platforms) {
     if (p.moving) {
+      p.prevX = p.x;
+      p.prevY = p.y;
       if (p.moveAxis === 'x') {
         p.x = p.origX + Math.sin(t * p.moveSpeed + p.moveOffset) * p.moveRange;
       } else {
         p.y = p.origY + Math.sin(t * p.moveSpeed + p.moveOffset) * p.moveRange;
       }
+      p.dx = p.x - p.prevX;
+      p.dy = p.y - p.prevY;
     }
     // breakable platform timer
     if (p.breakable && p.breakTimer > 0) {
@@ -1139,10 +1143,11 @@ function update() {
           }
         }
 
-        // moving platform carry
-        if (p.moving && p.moveAxis === 'x') {
-          const newX = p.origX + Math.sin(performance.now() * 0.001 * p.moveSpeed + p.moveOffset) * p.moveRange;
-          player.x += newX - p.x;
+        // sticky moving platform — carry player with platform
+        if (p.moving) {
+          // always carry on the platform's movement axis
+          if (p.dx) player.x += p.dx;
+          if (p.dy) player.y += p.dy;
         }
       } else if (minOverlap === overlapTop && player.vy < 0) {
         player.y = p.y + p.h;
