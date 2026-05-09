@@ -3907,6 +3907,17 @@ function drawStickman() {
   ctx.translate(cx, cy);
   ctx.scale(player.facing * player.scaleX, player.scaleY);
 
+  // lean forward when running, tilt back when rising, forward when falling
+  const isRunning = player.grounded && Math.abs(player.vx) > 0.5;
+  const runSpeed = Math.min(Math.abs(player.vx), 5);
+  let bodyLean = 0;
+  if (isRunning) {
+    bodyLean = 0.12 + runSpeed * 0.03; // lean into the run
+  } else if (!player.grounded) {
+    bodyLean = player.vy < -1 ? -0.1 : player.vy > 1 ? 0.15 : 0;
+  }
+  ctx.rotate(bodyLean);
+
   // get color (rainbow cycles hue)
   let col = player.stickColor;
   if (player.stickRainbow) {
@@ -3927,42 +3938,105 @@ function drawStickman() {
   const bodyBot = player.h/2 - 6;
   const bodyLen = bodyBot - bodyTop;
 
-  // --- HEAD (circle, not filled — outline only like Alan Becker) ---
+  // --- HEAD (circle with slight bob) ---
+  const headBobY = isRunning ? Math.sin(t * (8 + runSpeed * 2) * 2) * 1.2 : 0;
   ctx.beginPath();
-  ctx.arc(0, headY, headR, 0, Math.PI * 2);
+  ctx.arc(0, headY + headBobY, headR, 0, Math.PI * 2);
   ctx.fill();
 
-  // --- BODY (single line) ---
-  ctx.beginPath();
-  ctx.moveTo(0, bodyTop);
-  ctx.lineTo(0, bodyBot);
-  ctx.stroke();
-
-  // --- LEGS ---
-  const legLen = 10;
-  if (player.wallSliding) {
-    // legs pressed against wall
-    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(-4, bodyBot + legLen); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(-2, bodyBot + legLen - 2); ctx.stroke();
-  } else if (player.dashing) {
-    // legs trailing behind
-    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(-8, bodyBot + 4); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(-6, bodyBot + 8); ctx.stroke();
-  } else if (player.grounded && Math.abs(player.vx) > 0.5) {
-    // running — animated legs
-    const legPhase = t * 10;
-    const l1 = Math.sin(legPhase) * 8;
-    const l2 = Math.sin(legPhase + Math.PI) * 8;
-    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(l1, bodyBot + legLen); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(l2, bodyBot + legLen); ctx.stroke();
-  } else if (!player.grounded) {
-    // jumping — legs bent
-    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(-5, bodyBot + 3); ctx.lineTo(-3, bodyBot + legLen); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(4, bodyBot + 4); ctx.lineTo(5, bodyBot + legLen); ctx.stroke();
+  // --- BODY (single line, slight curve when running) ---
+  if (isRunning) {
+    const curve = Math.sin(t * (8 + runSpeed * 2) * 2) * 0.8;
+    ctx.beginPath();
+    ctx.moveTo(0, bodyTop + headBobY);
+    ctx.quadraticCurveTo(curve, (bodyTop + bodyBot) / 2, 0, bodyBot);
+    ctx.stroke();
   } else {
-    // idle — standing
-    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(-4, bodyBot + legLen); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, bodyBot); ctx.lineTo(4, bodyBot + legLen); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, bodyTop);
+    ctx.lineTo(0, bodyBot);
+    ctx.stroke();
+  }
+
+  // --- LEGS (2-segment with knee joints for smooth animation) ---
+  const thighLen = 7;
+  const shinLen = 7;
+  function drawLeg(hipX, hipY, thighAngle, kneeAngle) {
+    const kneeX = hipX + Math.sin(thighAngle) * thighLen;
+    const kneeY = hipY + Math.cos(thighAngle) * thighLen;
+    const footX = kneeX + Math.sin(kneeAngle) * shinLen;
+    const footY = kneeY + Math.cos(kneeAngle) * shinLen;
+    ctx.beginPath();
+    ctx.moveTo(hipX, hipY);
+    ctx.lineTo(kneeX, kneeY);
+    ctx.lineTo(footX, footY);
+    ctx.stroke();
+    return { footX, footY };
+  }
+  if (player.wallSliding) {
+    drawLeg(0, bodyBot, -0.4, -0.6);
+    drawLeg(0, bodyBot, -0.2, -0.3);
+  } else if (player.dashing) {
+    drawLeg(0, bodyBot, -0.9, -0.3);
+    drawLeg(0, bodyBot, -0.6, -0.8);
+  } else if (player.grounded && Math.abs(player.vx) > 0.5) {
+    // panicked sprint — fast smooth 2-joint leg cycle
+    const speed = Math.min(Math.abs(player.vx), 5);
+    const freq = 8 + speed * 2; // faster legs when moving faster
+    const legPhase = t * freq;
+    // contact-pass-push cycle for each leg (offset by PI)
+    const p1 = legPhase;
+    const p2 = legPhase + Math.PI;
+    // thigh swings forward and back, knee bends on backswing
+    const thigh1 = Math.sin(p1) * 0.8;
+    const knee1 = Math.max(0, Math.sin(p1 + 0.6)) * 1.2 + 0.1;
+    const thigh2 = Math.sin(p2) * 0.8;
+    const knee2 = Math.max(0, Math.sin(p2 + 0.6)) * 1.2 + 0.1;
+    // slight body bounce
+    const bounce = Math.abs(Math.sin(legPhase * 2)) * 1.5;
+    ctx.save();
+    ctx.translate(0, -bounce);
+    drawLeg(0, bodyBot, thigh1, knee1);
+    drawLeg(0, bodyBot, thigh2, knee2);
+    // foot dust puffs when foot strikes ground
+    if (Math.sin(p1) < -0.7) {
+      ctx.globalAlpha = 0.3;
+      ctx.fillStyle = '#aa9977';
+      const f1 = { footX: Math.sin(thigh1) * thighLen + Math.sin(knee1) * shinLen, footY: bodyBot + Math.cos(thigh1) * thighLen + Math.cos(knee1) * shinLen };
+      for (let d = 0; d < 3; d++) {
+        ctx.beginPath();
+        ctx.arc(f1.footX - 2 + d * 3, f1.footY + 1, 1.5 - d * 0.3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = col;
+    }
+    ctx.restore();
+  } else if (!player.grounded) {
+    // dynamic jump pose based on vertical velocity
+    const vy = player.vy;
+    if (vy < -1) {
+      // rising — tuck jump! knees pull up toward chest
+      const tuck = Math.min(1, Math.abs(vy) / 6);
+      // front leg kicks forward, back leg trails
+      drawLeg(0, bodyBot, -0.3 - tuck * 0.5, 0.8 + tuck * 1.0);
+      drawLeg(0, bodyBot, 0.4 + tuck * 0.3, 0.2 + tuck * 0.6);
+    } else if (vy > 1) {
+      // falling — legs spread in a dynamic wind-blown pose
+      const spread = Math.min(1, vy / 5);
+      const flutter = Math.sin(t * 15) * 0.15; // slight flutter
+      drawLeg(0, bodyBot, -0.5 - spread * 0.3 + flutter, -0.3 + spread * 0.4);
+      drawLeg(0, bodyBot, 0.5 + spread * 0.3 - flutter, 0.3 - spread * 0.2);
+    } else {
+      // apex — legs extended gracefully, brief hang time pose
+      drawLeg(0, bodyBot, -0.3, 0.6);
+      drawLeg(0, bodyBot, 0.3, 0.4);
+    }
+  } else {
+    // idle — slight breathing sway
+    const breathe = Math.sin(t * 2) * 0.05;
+    drawLeg(0, bodyBot, -0.2 + breathe, 0.15);
+    drawLeg(0, bodyBot, 0.2 - breathe, 0.15);
   }
 
   // --- ARMS ---
@@ -4002,15 +4076,64 @@ function drawStickman() {
     // other arm back
     ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(-armLen, armY + 3); ctx.stroke();
   } else if (player.dashing) {
+    // arms swept back — streamlined
     ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(armLen + 4, armY - 3); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(-armLen, armY + 2); ctx.stroke();
   } else if (!player.grounded) {
-    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(-armLen, armY - 6); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(armLen, armY - 4); ctx.stroke();
+    // dynamic arm poses based on velocity
+    const vy = player.vy;
+    if (vy < -1) {
+      // rising — arms reach upward like a superhero leap
+      const reach = Math.min(1, Math.abs(vy) / 6);
+      const wave = Math.sin(t * 12) * 0.1;
+      ctx.beginPath(); ctx.moveTo(0, armY);
+      ctx.lineTo(-armLen * 0.6, armY - armLen * 0.5 - reach * 4);
+      ctx.lineTo(-armLen * 0.3, armY - armLen - reach * 3);
+      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, armY);
+      ctx.lineTo(armLen * 0.7 + wave, armY - armLen * 0.3 - reach * 3);
+      ctx.stroke();
+    } else if (vy > 1) {
+      // falling — arms windmill / flail for balance
+      const flail = Math.sin(t * 14) * 0.6;
+      const spread = Math.min(1, vy / 5);
+      ctx.beginPath(); ctx.moveTo(0, armY);
+      ctx.lineTo(-armLen * Math.cos(flail), armY - armLen * Math.sin(flail) * 0.8);
+      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, armY);
+      ctx.lineTo(armLen * Math.cos(flail + 1.5), armY - armLen * Math.sin(flail + 1.5) * 0.6 + spread * 2);
+      ctx.stroke();
+    } else {
+      // apex — arms out to sides gracefully
+      ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(-armLen, armY - 4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(armLen, armY - 3); ctx.stroke();
+    }
   } else if (Math.abs(player.vx) > 0.5) {
-    const armPhase = t * 10;
-    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(Math.sin(armPhase) * 6, armY + Math.cos(armPhase) * 4); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(Math.sin(armPhase + Math.PI) * 6, armY + Math.cos(armPhase + Math.PI) * 4); ctx.stroke();
+    // panicked run — arms pump hard, opposite to legs
+    const speed = Math.min(Math.abs(player.vx), 5);
+    const freq = 8 + speed * 2;
+    const armPhase = t * freq;
+    const bounce = Math.abs(Math.sin(armPhase * 2)) * 1.5;
+    // arm swings opposite to legs — elbows bend on backswing
+    const a1 = Math.sin(armPhase + Math.PI) * 0.9; // opposite to leg 1
+    const a2 = Math.sin(armPhase) * 0.9; // opposite to leg 2
+    const elbowBend1 = Math.max(0, -Math.sin(armPhase + Math.PI + 0.5)) * 0.6;
+    const elbowBend2 = Math.max(0, -Math.sin(armPhase + 0.5)) * 0.6;
+    ctx.save();
+    ctx.translate(0, -bounce);
+    // arm 1 — upper + forearm
+    const elbow1X = Math.sin(a1) * armLen * 0.5;
+    const elbow1Y = armY + Math.cos(a1) * armLen * 0.4;
+    const hand1X = elbow1X + Math.sin(a1 + elbowBend1) * armLen * 0.5;
+    const hand1Y = elbow1Y + Math.cos(a1 + elbowBend1) * armLen * 0.4;
+    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(elbow1X, elbow1Y); ctx.lineTo(hand1X, hand1Y); ctx.stroke();
+    // arm 2
+    const elbow2X = Math.sin(a2) * armLen * 0.5;
+    const elbow2Y = armY + Math.cos(a2) * armLen * 0.4;
+    const hand2X = elbow2X + Math.sin(a2 + elbowBend2) * armLen * 0.5;
+    const hand2Y = elbow2Y + Math.cos(a2 + elbowBend2) * armLen * 0.4;
+    ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(elbow2X, elbow2Y); ctx.lineTo(hand2X, hand2Y); ctx.stroke();
+    ctx.restore();
   } else {
     // idle — arms slightly down, holding stick loosely
     ctx.beginPath(); ctx.moveTo(0, armY); ctx.lineTo(-armLen, armY + 5); ctx.stroke();
