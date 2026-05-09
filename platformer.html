@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Platformer</title>
+<title>Brumbo Rumble</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; background: #1a1a2e; overflow: hidden; font-family: monospace; }
@@ -111,10 +111,12 @@ const MusicEngine = (() => {
   // music state
   let beat = 0;
   let bpm = 140;
+  let baseBpm = 140;
   let modernBlend = 0;        // 0 = pure 8-bit, 1 = pure modern
   let targetModernBlend = 0;
   let intensity = 0.5;        // 0 = calm, 1 = action
   let targetIntensity = 0.5;
+  let transpose = 0;          // semitones to shift all notes
 
   // channel gains
   let melodyGain, bassGain, arpGain, drumGain, padGain, leadGain;
@@ -129,7 +131,7 @@ const MusicEngine = (() => {
       NOTE_FREQS[NOTES[i] + oct] = 440 * Math.pow(2, (oct - 4) + (i - 9) / 12);
     }
   }
-  function n(note) { return NOTE_FREQS[note] || 440; }
+  function n(note) { return (NOTE_FREQS[note] || 440) * Math.pow(2, transpose / 12); }
 
   // ---- MELODY PATTERNS (Mario-inspired, bouncy and heroic) ----
   // Each pattern = array of { note, dur } where dur is in beats
@@ -457,6 +459,22 @@ const MusicEngine = (() => {
     isRunning() { return running; },
     getModernBlend() { return modernBlend; },
     getIntensity() { return intensity; },
+    // Set mood for different level themes
+    setMood(mood) {
+      if (mood === 'cave') {
+        transpose = -5;      // lower pitch — darker, ominous
+        bpm = 110;           // slower, more deliberate
+        baseBpm = 110;
+      } else if (mood === 'sky') {
+        transpose = 3;       // higher pitch — airy, bright
+        bpm = 155;           // faster, energetic
+        baseBpm = 155;
+      } else {
+        transpose = 0;       // normal
+        bpm = 140;
+        baseBpm = 140;
+      }
+    },
   };
 })();
 
@@ -870,6 +888,9 @@ function startLevel(num) {
   const blend = Math.min(1, (num - 1) * 0.42);
   MusicEngine.setModernBlend(blend);
   MusicEngine.setIntensity(0.4 + num * 0.1);
+  // set mood based on level theme
+  const themeName = level.theme.name.toLowerCase();
+  MusicEngine.setMood(themeName);
 }
 
 function updateUI() { /* HUD is drawn on canvas in drawHUD() */ }
@@ -3821,7 +3842,9 @@ const Breakout = (() => {
 // GAME LOOP (with banana integration)
 // ============================================================
 function loop() {
-  if (Banana.isActive()) {
+  if (titleScreen) {
+    drawTitleScreen();
+  } else if (Banana.isActive()) {
     const s = S();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -3880,8 +3903,169 @@ draw = function() {
   }
 };
 
-initGame();
+// ============================================================
+// TITLE SCREEN
+// ============================================================
+let titleScreen = true;
+let titleTimer = 0;
+
+function drawTitleScreen() {
+  const s = S();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(s, 0, 0, s, 0, 0);
+
+  titleTimer++;
+
+  // animated background — parallax mountains
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#0a0a2e');
+  grad.addColorStop(0.5, '#1a2a5e');
+  grad.addColorStop(0.8, '#0f3460');
+  grad.addColorStop(1, '#16213e');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // stars
+  for (let i = 0; i < 60; i++) {
+    const sx = (i * 137 + 50) % W;
+    const sy = (i * 97 + 30) % (H * 0.6);
+    const twinkle = 0.3 + Math.sin(titleTimer * 0.04 + i * 2.1) * 0.3;
+    ctx.fillStyle = `rgba(255,255,255,${twinkle})`;
+    ctx.fillRect(sx, sy, 2, 2);
+  }
+
+  // distant mountains
+  ctx.fillStyle = '#1a3a1e88';
+  for (let i = 0; i < 5; i++) {
+    const mx = i * 200 - 50 + Math.sin(titleTimer * 0.003 + i) * 10;
+    const mh = 80 + Math.sin(i * 1.7) * 40;
+    ctx.beginPath();
+    ctx.moveTo(mx, H * 0.75);
+    ctx.lineTo(mx + 100, H * 0.75 - mh);
+    ctx.lineTo(mx + 200, H * 0.75);
+    ctx.fill();
+  }
+
+  // ground
+  ctx.fillStyle = '#2d5a27';
+  ctx.fillRect(0, H * 0.75, W, H * 0.25);
+  ctx.fillStyle = '#3d7a37';
+  ctx.fillRect(0, H * 0.75, W, 6);
+
+  // title: "BRUMBO RUMBLE"
+  const titleBounce = Math.sin(titleTimer * 0.05) * 5;
+  const titleScale = 1 + Math.sin(titleTimer * 0.03) * 0.02;
+
+  ctx.save();
+  ctx.translate(W / 2, H * 0.3 + titleBounce);
+  ctx.scale(titleScale, titleScale);
+
+  // shadow
+  ctx.font = 'bold 56px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#000000aa';
+  ctx.fillText('BRUMBO', 3, 3);
+  ctx.fillText('RUMBLE', 3, 63);
+
+  // main text with per-letter color cycling
+  const title1 = 'BRUMBO';
+  const title2 = 'RUMBLE';
+  const colors = ['#e94560', '#ff6b35', '#ffd700', '#4ecca3', '#3a86ff', '#e94560'];
+
+  let xOff = -ctx.measureText(title1).width / 2;
+  for (let i = 0; i < title1.length; i++) {
+    const hue = ((titleTimer * 2 + i * 40) % 360);
+    ctx.fillStyle = `hsl(${hue}, 85%, 60%)`;
+    const letterBounce = Math.sin(titleTimer * 0.08 + i * 0.5) * 3;
+    ctx.fillText(title1[i], xOff + ctx.measureText(title1.substring(0, i)).width + ctx.measureText(title1[i]).width / 2, letterBounce);
+  }
+
+  xOff = -ctx.measureText(title2).width / 2;
+  for (let i = 0; i < title2.length; i++) {
+    const hue = ((titleTimer * 2 + (i + 6) * 40) % 360);
+    ctx.fillStyle = `hsl(${hue}, 85%, 60%)`;
+    const letterBounce = Math.sin(titleTimer * 0.08 + (i + 6) * 0.5) * 3;
+    ctx.fillText(title2[i], xOff + ctx.measureText(title2.substring(0, i)).width + ctx.measureText(title2[i]).width / 2, 60 + letterBounce);
+  }
+
+  ctx.restore();
+
+  // animated character preview
+  const charX = W * 0.3;
+  const charY = H * 0.68;
+  const charFrame = Math.floor(titleTimer / 8) % 4;
+  ctx.save();
+  ctx.translate(charX, charY);
+
+  // running character
+  ctx.fillStyle = '#e94560';
+  ctx.fillRect(3, 10, 20, 16);
+  ctx.fillStyle = '#f5c6a0';
+  ctx.fillRect(5, 0, 16, 13);
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(15, 4, 4, 4);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(16, 4, 2, 2);
+  ctx.fillStyle = '#c73650';
+  const legOff = [0, 4, 0, -4][charFrame];
+  ctx.fillRect(5, 26, 7, 8 + legOff);
+  ctx.fillRect(14, 26, 7, 8 - legOff);
+  ctx.restore();
+
+  // some floating coins
+  for (let i = 0; i < 4; i++) {
+    const coinX = W * 0.5 + i * 50;
+    const coinY = H * 0.6 + Math.sin(titleTimer * 0.06 + i) * 8;
+    ctx.fillStyle = '#ffd700';
+    ctx.beginPath();
+    ctx.arc(coinX, coinY, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffec80';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('$', coinX, coinY + 4);
+  }
+
+  // enemies
+  const enemyX = W * 0.72;
+  const enemyY = H * 0.66;
+  ctx.fillStyle = '#e74c3c';
+  ctx.fillRect(enemyX, enemyY, 24, 24);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(enemyX + 4, enemyY + 6, 6, 6);
+  ctx.fillRect(enemyX + 14, enemyY + 6, 6, 6);
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(enemyX + 6, enemyY + 8, 3, 3);
+  ctx.fillRect(enemyX + 16, enemyY + 8, 3, 3);
+
+  // "Press SPACE to start" with blinking
+  if (Math.floor(titleTimer / 30) % 2 === 0) {
+    ctx.font = '18px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('Press SPACE to start', W / 2, H * 0.88);
+  }
+
+  // controls hint
+  ctx.font = '12px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffffff66';
+  ctx.fillText('← → Move  |  SPACE Jump  |  SHIFT Dash  |  M Mute', W / 2, H * 0.95);
+}
+
+// Start with title screen
+state = 'title';
 loop();
+
+// Handle title screen input
+window.addEventListener('keydown', function titleHandler(e) {
+  if (titleScreen && (e.code === 'Space' || e.code === 'Enter')) {
+    titleScreen = false;
+    initGame();
+    e.preventDefault();
+  }
+});
 </script>
 </body>
 </html>
