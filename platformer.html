@@ -1135,11 +1135,19 @@ function update() {
           playSound('win');
           updateUI();
           if (currentLevel >= 3) {
-            state = 'beatgame';
-            showOverlay('YOU WIN!', '#ffd700', 'Final Score: ' + score, 'Play Again', initGame);
+            // final level — breakout then win screen
+            state = 'breakout';
+            Breakout.init(() => {
+              state = 'beatgame';
+              showOverlay('YOU WIN!', '#ffd700', 'Final Score: ' + score, 'Play Again', initGame);
+            });
           } else {
-            state = 'levelcomplete';
-            showOverlay('Level Complete!', '#4ecca3', 'Score: ' + score, 'Next Level', () => { currentLevel++; startLevel(currentLevel); });
+            // bonus breakout round before next level
+            state = 'breakout';
+            Breakout.init(() => {
+              state = 'levelcomplete';
+              showOverlay('Level Complete!', '#4ecca3', 'Score: ' + score, 'Next Level', () => { currentLevel++; startLevel(currentLevel); });
+            });
           }
         }
 
@@ -3500,6 +3508,316 @@ canvas.addEventListener('wheel', e => {
 }, { passive: false });
 
 // ============================================================
+// BREAKOUT BONUS GAME
+// ============================================================
+const Breakout = (() => {
+  let active = false;
+  let paddle, ball, blocks, fallingBananas, bonusScore;
+  let ballLaunched, lives, timer;
+  let onComplete = null;
+
+  const COLS = 10, ROWS = 5;
+  const BLOCK_W = 58, BLOCK_H = 16, BLOCK_GAP = 4;
+  const PADDLE_W = 80, PADDLE_H = 12;
+  const BALL_R = 5;
+  const GRID_W = COLS * (BLOCK_W + BLOCK_GAP) - BLOCK_GAP;
+  const GRID_X = (W - GRID_W) / 2;
+  const GRID_Y = 60;
+
+  // colors per row
+  const ROW_COLORS = ['#e94560', '#ff6b35', '#ffd700', '#4ecca3', '#3a86ff'];
+
+  function init(callback) {
+    active = true;
+    onComplete = callback;
+    bonusScore = 0;
+    lives = 3;
+    ballLaunched = false;
+    timer = 0;
+    fallingBananas = [];
+
+    // paddle
+    paddle = { x: W / 2 - PADDLE_W / 2, y: H - 40, w: PADDLE_W, h: PADDLE_H };
+
+    // ball
+    ball = {
+      x: W / 2, y: paddle.y - BALL_R - 2,
+      vx: 0, vy: 0, r: BALL_R
+    };
+
+    // blocks
+    blocks = [];
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        blocks.push({
+          x: GRID_X + c * (BLOCK_W + BLOCK_GAP),
+          y: GRID_Y + r * (BLOCK_H + BLOCK_GAP),
+          w: BLOCK_W, h: BLOCK_H,
+          alive: true,
+          color: ROW_COLORS[r],
+          points: (ROWS - r) * 50
+        });
+      }
+    }
+  }
+
+  function launchBall() {
+    if (ballLaunched) return;
+    ballLaunched = true;
+    const angle = -Math.PI / 2 + (Math.random() - 0.5) * 0.8;
+    ball.vx = Math.cos(angle) * 5;
+    ball.vy = Math.sin(angle) * 5;
+  }
+
+  function resetBall() {
+    ballLaunched = false;
+    ball.x = paddle.x + paddle.w / 2;
+    ball.y = paddle.y - BALL_R - 2;
+    ball.vx = 0;
+    ball.vy = 0;
+  }
+
+  function updateBreakout() {
+    if (!active) return;
+    timer++;
+
+    // paddle movement
+    const wantLeft = keys['ArrowLeft'] || keys['KeyA'];
+    const wantRight = keys['ArrowRight'] || keys['KeyD'];
+    if (wantLeft) paddle.x -= 6;
+    if (wantRight) paddle.x += 6;
+    paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+
+    // launch on space/up
+    if (!ballLaunched) {
+      ball.x = paddle.x + paddle.w / 2;
+      ball.y = paddle.y - BALL_R - 2;
+      if (keys['Space'] || keys['ArrowUp'] || keys['KeyW']) {
+        launchBall();
+      }
+      return;
+    }
+
+    // ball movement
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+
+    // wall bounce
+    if (ball.x - ball.r < 0) { ball.x = ball.r; ball.vx = Math.abs(ball.vx); }
+    if (ball.x + ball.r > W) { ball.x = W - ball.r; ball.vx = -Math.abs(ball.vx); }
+    if (ball.y - ball.r < 0) { ball.y = ball.r; ball.vy = Math.abs(ball.vy); }
+
+    // ball fell below paddle
+    if (ball.y > H + 20) {
+      lives--;
+      if (lives <= 0) {
+        // end bonus round
+        endBreakout();
+        return;
+      }
+      playSound('hurt');
+      resetBall();
+      return;
+    }
+
+    // paddle collision
+    if (ball.vy > 0 &&
+        ball.x > paddle.x - ball.r && ball.x < paddle.x + paddle.w + ball.r &&
+        ball.y + ball.r > paddle.y && ball.y + ball.r < paddle.y + paddle.h + 8) {
+      ball.vy = -Math.abs(ball.vy);
+      // angle based on where it hit the paddle
+      const hitPos = (ball.x - paddle.x) / paddle.w; // 0-1
+      ball.vx = (hitPos - 0.5) * 8;
+      // keep speed consistent
+      const speed = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
+      const targetSpeed = 5 + timer * 0.002; // gradually speed up
+      ball.vx = (ball.vx / speed) * targetSpeed;
+      ball.vy = (ball.vy / speed) * targetSpeed;
+      playSound('jump');
+    }
+
+    // block collision
+    for (const b of blocks) {
+      if (!b.alive) continue;
+      if (ball.x + ball.r > b.x && ball.x - ball.r < b.x + b.w &&
+          ball.y + ball.r > b.y && ball.y - ball.r < b.y + b.h) {
+        b.alive = false;
+        bonusScore += b.points;
+
+        // determine bounce direction
+        const fromLeft = ball.x - (b.x);
+        const fromRight = (b.x + b.w) - ball.x;
+        const fromTop = ball.y - (b.y);
+        const fromBottom = (b.y + b.h) - ball.y;
+        const minH = Math.min(fromLeft, fromRight);
+        const minV = Math.min(fromTop, fromBottom);
+        if (minH < minV) ball.vx = -ball.vx;
+        else ball.vy = -ball.vy;
+
+        playSound('coin');
+        spawnParticles(b.x + b.w/2, b.y + b.h/2, 6, b.color, { spread: 3, life: 15 });
+
+        // drop a banana (70% chance)
+        if (Math.random() < 0.7) {
+          fallingBananas.push({
+            x: b.x + b.w / 2,
+            y: b.y + b.h / 2,
+            vy: 1 + Math.random() * 0.5,
+            angle: Math.random() * Math.PI * 2,
+            rotSpeed: (Math.random() - 0.5) * 0.1,
+            caught: false
+          });
+        }
+
+        break; // one block per frame
+      }
+    }
+
+    // update falling bananas
+    for (let i = fallingBananas.length - 1; i >= 0; i--) {
+      const b = fallingBananas[i];
+      b.y += b.vy;
+      b.angle += b.rotSpeed;
+
+      // catch with paddle
+      if (!b.caught && b.y > paddle.y - 10 && b.y < paddle.y + paddle.h &&
+          b.x > paddle.x - 8 && b.x < paddle.x + paddle.w + 8) {
+        b.caught = true;
+        bonusScore += 200;
+        playSound('powerup');
+        spawnFloatingText(b.x, b.y - 10, '🍌+200', '#ffd700');
+        fallingBananas.splice(i, 1);
+        continue;
+      }
+
+      // fell off screen
+      if (b.y > H + 20) {
+        fallingBananas.splice(i, 1);
+      }
+    }
+
+    // check if all blocks are gone
+    if (blocks.every(b => !b.alive)) {
+      endBreakout();
+    }
+  }
+
+  function endBreakout() {
+    active = false;
+    score += bonusScore;
+    if (onComplete) onComplete();
+  }
+
+  function drawBreakout(c) {
+    // dark blue background
+    const grad = c.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#0a0a2e');
+    grad.addColorStop(1, '#1a1a4e');
+    c.fillStyle = grad;
+    c.fillRect(0, 0, W, H);
+
+    // stars
+    for (let i = 0; i < 40; i++) {
+      const sx = (i * 137 + 50) % W;
+      const sy = (i * 97 + 30) % H;
+      const bright = 0.3 + Math.sin(timer * 0.05 + i) * 0.2;
+      c.fillStyle = `rgba(255,255,255,${bright})`;
+      c.fillRect(sx, sy, 2, 2);
+    }
+
+    // blocks
+    for (const b of blocks) {
+      if (!b.alive) continue;
+      c.fillStyle = b.color;
+      c.fillRect(b.x, b.y, b.w, b.h);
+      // highlight
+      c.fillStyle = '#ffffff33';
+      c.fillRect(b.x, b.y, b.w, 3);
+      // dark edge
+      c.fillStyle = '#00000033';
+      c.fillRect(b.x, b.y + b.h - 2, b.w, 2);
+    }
+
+    // falling bananas
+    for (const b of fallingBananas) {
+      c.save();
+      c.translate(b.x, b.y);
+      c.rotate(b.angle);
+      c.fillStyle = '#ffd700';
+      c.beginPath();
+      for (let t = -1; t <= 1; t += 0.1) {
+        const px = t * 8;
+        const py = -Math.pow(t, 2) * 5 + 2 + t * 1.5;
+        if (t === -1) c.moveTo(px, py); else c.lineTo(px, py);
+      }
+      for (let t = 1; t >= -1; t -= 0.1) {
+        const px = t * 8;
+        const py = -Math.pow(t, 2) * 5 + 2 + t * 1.5 + 5;
+        c.lineTo(px, py);
+      }
+      c.closePath();
+      c.fill();
+      c.restore();
+    }
+
+    // ball
+    if (ballLaunched || true) {
+      c.fillStyle = '#fff';
+      c.shadowColor = '#fff';
+      c.shadowBlur = 8;
+      c.beginPath();
+      c.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+      c.fill();
+      c.shadowBlur = 0;
+    }
+
+    // paddle
+    c.fillStyle = '#4ecca3';
+    c.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
+    c.fillStyle = '#6ee8c0';
+    c.fillRect(paddle.x + 2, paddle.y + 1, paddle.w - 4, 4);
+    c.fillStyle = '#3ba88c';
+    c.fillRect(paddle.x, paddle.y + paddle.h - 3, paddle.w, 3);
+
+    // HUD
+    c.font = 'bold 16px monospace';
+    c.textAlign = 'left';
+    c.fillStyle = '#ffd700';
+    c.fillText('BONUS ROUND', 10, 25);
+    c.font = '14px monospace';
+    c.fillStyle = '#fff';
+    c.fillText('Bonus: ' + bonusScore, 10, 45);
+
+    c.textAlign = 'right';
+    c.fillStyle = '#e94560';
+    let livesStr = '';
+    for (let i = 0; i < lives; i++) livesStr += '♥';
+    c.fillText(livesStr, W - 10, 25);
+
+    // instructions
+    if (!ballLaunched) {
+      c.textAlign = 'center';
+      c.fillStyle = '#ffffff88';
+      c.font = '14px monospace';
+      c.fillText('Press SPACE to launch', W / 2, H - 10);
+    }
+
+    // bananas caught counter
+    c.textAlign = 'right';
+    c.font = '13px monospace';
+    c.fillStyle = '#ffd700';
+    c.fillText('🍌 Catch bananas for bonus!', W - 10, 45);
+  }
+
+  return {
+    isActive() { return active; },
+    init,
+    update: updateBreakout,
+    draw: drawBreakout
+  };
+})();
+
+// ============================================================
 // GAME LOOP (with banana integration)
 // ============================================================
 function loop() {
@@ -3509,6 +3827,16 @@ function loop() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(s, 0, 0, s, 0, 0);
     Banana.drawBananaScreen(ctx);
+  } else if (Breakout.isActive()) {
+    const s = S();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(s, 0, 0, s, 0, 0);
+    Breakout.update();
+    Breakout.draw(ctx);
+    updateParticles();
+    drawParticles();
+    drawFloatingTexts();
   } else {
     update();
     updateBananaBullets();
