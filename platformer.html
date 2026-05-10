@@ -821,6 +821,24 @@ const CHUNKS = [
     c.push({ x: startX + w/2, y: y - 60, r: 8, collected: false });
     return { platforms: p, enemies: e, coins: c, powerups: pw, endX: startX + w, endY: y };
   },
+  // Tank arena
+  function(startX, startY, diff) {
+    const p = [], e = [], c = [], pw = [];
+    let y = Math.min(startY, H - 60);
+    const w = 400;
+    p.push({ x: startX, y, w, h: 20 });
+    // small platforms for maneuvering
+    p.push({ x: startX + 80, y: y - 70, w: 80, h: 12 });
+    p.push({ x: startX + 240, y: y - 70, w: 80, h: 12 });
+    e.push({ x: startX + w/2 - 18, y: y - 40, w: 36, h: 36, type: 'tank',
+             hp: 3, maxHp: 3, gunHp: 10, maxGunHp: 10,
+             originX: startX + 20, rangeW: w - 40, speed: 0.5 + diff * 0.15, dir: 1,
+             hitFlash: 0, shakeTimer: 0 });
+    c.push({ x: startX + 120, y: y - 110, r: 8, collected: false });
+    c.push({ x: startX + 280, y: y - 110, r: 8, collected: false });
+    pw.push({ x: startX + w/2, y: y - 50, w: 16, h: 16, type: 'score2x', collected: false });
+    return { platforms: p, enemies: e, coins: c, powerups: pw, endX: startX + w, endY: y };
+  },
 ];
 
 function generateLevel(levelNum) {
@@ -1330,6 +1348,12 @@ function update() {
           playSound('jump');
         }
       }
+    } else if (e.type === 'tank') {
+      // tank: slow patrol, absorbs hits
+      e.x += e.speed * e.dir;
+      if (e.x <= e.originX || e.x + e.w >= e.originX + e.rangeW) e.dir *= -1;
+      if (e.hitFlash > 0) e.hitFlash--;
+      if (e.shakeTimer > 0) e.shakeTimer--;
     } else {
       e.x += e.speed * e.dir;
       if (e.x <= e.originX || e.x + e.w >= e.originX + e.rangeW) e.dir *= -1;
@@ -1348,6 +1372,26 @@ function update() {
           spawnParticles(e.x + e.w/2, e.y, 8, '#888', { spread: 4, life: 15 });
           spawnFloatingText(e.x + e.w/2, e.y - 10, 'STUNNED!', '#ffaa00');
           score += 50;
+        } else if (e.type === 'tank') {
+          // tank: needs 3 stomps to kill
+          e.hp--;
+          e.hitFlash = 12;
+          e.shakeTimer = 8;
+          player.vy = JUMP_FORCE * 0.7;
+          playSound('stomp');
+          triggerShake(5, 8);
+          if (e.hp <= 0) {
+            e.dead = true;
+            comboCount++; comboTimer = 60;
+            const pts = 300 * comboCount;
+            score += pts;
+            spawnParticles(e.x + e.w/2, e.y + e.h/2, 25, '#c0392b', { spread: 7, life: 25, gravity: 0.15 });
+            spawnFloatingText(e.x + e.w/2, e.y - 15, `DESTROYED! +${pts}`, '#ff4444');
+          } else {
+            spawnParticles(e.x + e.w/2, e.y, 8, '#c0392b', { spread: 4, life: 12 });
+            spawnFloatingText(e.x + e.w/2, e.y - 10, `${e.hp}/${e.maxHp}`, '#ff6666');
+            score += 50;
+          }
         } else if (e.type === 'shielded' && e.hp > 1 && !player.dashing) {
           e.hp--;
           player.vy = JUMP_FORCE * 0.6;
@@ -2113,6 +2157,78 @@ function drawEnemies() {
         ctx.textAlign = 'center';
         ctx.fillText('!', sx + e.w/2, e.y - 10);
       }
+    } else if (e.type === 'tank') {
+      // tank enemy — big, armored, HP bar
+      const bob = Math.sin(performance.now() * 0.003 + e.x) * 1;
+      const shake = e.shakeTimer > 0 ? (Math.random() - 0.5) * 4 : 0;
+      const tsx = sx + shake;
+
+      // treads
+      ctx.fillStyle = '#2c2c2c';
+      ctx.fillRect(tsx - 2, e.y + e.h - 8 + bob, e.w + 4, 8);
+      // tread details
+      ctx.fillStyle = '#444';
+      const treadPhase = (performance.now() * 0.01 * e.speed * e.dir) % 8;
+      for (let t = 0; t < 5; t++) {
+        ctx.fillRect(tsx + (t * 8 + treadPhase) % e.w, e.y + e.h - 7 + bob, 4, 6);
+      }
+
+      // main body (dark red armored hull)
+      const flashCol = e.hitFlash > 0 && e.hitFlash % 3 === 0 ? '#ff6666' : '#8b2500';
+      ctx.fillStyle = flashCol;
+      ctx.fillRect(tsx, e.y + 6 + bob, e.w, e.h - 14);
+      // armor plates
+      ctx.strokeStyle = '#5a1a00';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(tsx + 2, e.y + 8 + bob, e.w - 4, e.h - 18);
+      ctx.beginPath();
+      ctx.moveTo(tsx + e.w/2, e.y + 8 + bob);
+      ctx.lineTo(tsx + e.w/2, e.y + e.h - 10 + bob);
+      ctx.stroke();
+      // rivets
+      ctx.fillStyle = '#aaa';
+      for (let r = 0; r < 4; r++) {
+        const rx = tsx + 5 + r * (e.w - 10) / 3;
+        ctx.beginPath();
+        ctx.arc(rx, e.y + 10 + bob, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(rx, e.y + e.h - 10 + bob, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // turret on top
+      ctx.fillStyle = e.hitFlash > 0 && e.hitFlash % 3 === 0 ? '#ff8888' : '#a03020';
+      ctx.fillRect(tsx + e.w/2 - 10, e.y + bob, 20, 10);
+      // cannon barrel
+      const barrelDir = e.dir;
+      ctx.fillStyle = '#333';
+      ctx.fillRect(tsx + e.w/2 + barrelDir * 8, e.y + 2 + bob, barrelDir * 14, 5);
+      // cannon tip
+      ctx.fillStyle = '#555';
+      ctx.fillRect(tsx + e.w/2 + barrelDir * 20, e.y + 1 + bob, barrelDir * 4, 7);
+
+      // eyes (slits)
+      ctx.fillStyle = '#ff4444';
+      ctx.fillRect(tsx + 8, e.y + 14 + bob, 6, 3);
+      ctx.fillRect(tsx + e.w - 14, e.y + 14 + bob, 6, 3);
+
+      // HP bar above
+      const barW = e.w + 8;
+      const barH = 4;
+      const barX = tsx - 4;
+      const barY = e.y - 10 + bob;
+      ctx.fillStyle = '#333';
+      ctx.fillRect(barX, barY, barW, barH);
+      // stomp HP (red bar)
+      const stompRatio = e.hp / e.maxHp;
+      ctx.fillStyle = stompRatio > 0.5 ? '#e74c3c' : stompRatio > 0.25 ? '#e67e22' : '#c0392b';
+      ctx.fillRect(barX, barY, barW * stompRatio, barH);
+      // outline
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(barX, barY, barW, barH);
+
     } else {
       // walker
       const bob = Math.sin(performance.now() * 0.005 + e.x) * 1.5;
@@ -3769,13 +3885,40 @@ function updateBananaBullets() {
     for (const e of level.enemies) {
       if (e.dead) continue;
       if (b.x > e.x - 10 && b.x < e.x + e.w + 10 && b.y > e.y - 10 && b.y < e.y + e.h + 10) {
-        e.dead = true;
-        score += 200;
+        if (e.type === 'golem') {
+          // golem: banana stuns it
+          e.stunTimer = e.stunDuration;
+          spawnParticles(e.x + e.w/2, e.y, 6, '#ffd700', { spread: 3, life: 12 });
+          spawnFloatingText(e.x + e.w/2, e.y - 10, 'STUNNED!', '#ffaa00');
+          playSound('stomp');
+          score += 25;
+        } else if (e.type === 'tank') {
+          // tank: needs 10 banana gun hits
+          e.gunHp--;
+          e.hitFlash = 10;
+          e.shakeTimer = 6;
+          spawnParticles(e.x + e.w/2, e.y + e.h/2, 6, '#ffd700', { spread: 4, life: 12 });
+          playSound('stomp');
+          if (e.gunHp <= 0) {
+            e.dead = true;
+            score += 500;
+            triggerShake(8, 12);
+            spawnParticles(e.x + e.w/2, e.y + e.h/2, 30, '#c0392b', { spread: 8, life: 25, gravity: 0.15 });
+            spawnParticles(e.x + e.w/2, e.y + e.h/2, 15, '#ffd700', { spread: 6, life: 20 });
+            spawnFloatingText(e.x + e.w/2, e.y - 15, '🍌 TANK DOWN! +500', '#ffd700');
+          } else {
+            spawnFloatingText(e.x + e.w/2, e.y - 10, `${e.gunHp}/${e.maxGunHp}`, '#ffd700');
+            score += 20;
+          }
+        } else {
+          e.dead = true;
+          score += 200;
+          spawnParticles(e.x + e.w/2, e.y + e.h/2, 8, '#e94560', { spread: 4, life: 15 });
+          spawnFloatingText(e.x + e.w/2, e.y - 10, '🍌 OBLITERATED!', '#ffd700');
+        }
         playSound('stomp');
         triggerShake(5, 8);
         spawnParticles(e.x + e.w/2, e.y + e.h/2, 15, '#ffd700', { spread: 6, life: 20, gravity: 0.1 });
-        spawnParticles(e.x + e.w/2, e.y + e.h/2, 8, '#e94560', { spread: 4, life: 15 });
-        spawnFloatingText(e.x + e.w/2, e.y - 10, '🍌 OBLITERATED!', '#ffd700');
         b.life = 0;
         break;
       }
@@ -4193,6 +4336,24 @@ function updateStickmanMelee() {
             spawnParticles(e.x + e.w/2, e.y + e.h/2, 6, '#888', { spread: 4, life: 12 });
             spawnFloatingText(e.x + e.w/2, e.y - 10, 'BONK!', '#ffaa00');
             score += 50;
+          } else if (e.type === 'tank') {
+            // melee counts as a stomp hit
+            e.hp--;
+            e.hitFlash = 12;
+            e.shakeTimer = 8;
+            playSound('stomp');
+            triggerShake(5, 8);
+            if (e.hp <= 0) {
+              e.dead = true;
+              comboCount++; comboTimer = 60;
+              score += 300;
+              spawnParticles(e.x + e.w/2, e.y + e.h/2, 25, '#c0392b', { spread: 7, life: 25, gravity: 0.15 });
+              spawnFloatingText(e.x + e.w/2, e.y - 15, 'DESTROYED! +300', '#ff4444');
+            } else {
+              spawnParticles(e.x + e.w/2, e.y, 6, '#c0392b', { spread: 4, life: 12 });
+              spawnFloatingText(e.x + e.w/2, e.y - 10, `${e.hp}/${e.maxHp}`, '#ff6666');
+              score += 50;
+            }
           } else {
             e.dead = true;
             comboCount++;
@@ -4894,10 +5055,23 @@ window.addEventListener('keydown', function titleHandler(e) {
 
   // Action buttons (right side)
   const actSize = '64px';
-  const btnJump = makeBtn('tb-jump', '⬆', {
+  // Jump button — visible part
+  const btnJumpVisual = makeBtn('tb-jump-visual', '⬆', {
     width: actSize, height: actSize, right: '24px', bottom: '90px',
-    fontSize: '26px', background: 'rgba(80,200,120,0.2)', border: '2px solid rgba(80,200,120,0.4)'
+    fontSize: '26px', background: 'rgba(80,200,120,0.2)', border: '2px solid rgba(80,200,120,0.4)',
+    pointerEvents: 'none' // visual only, the hitbox below catches touches
   });
+  // Jump button — enlarged invisible hitbox (120x120 centered on the 64x64 button)
+  const btnJump = document.createElement('div');
+  btnJump.id = 'tb-jump';
+  Object.assign(btnJump.style, {
+    position: 'absolute', width: '120px', height: '120px',
+    right: '-4px', bottom: '62px',
+    background: 'transparent', border: 'none', borderRadius: '50%',
+    pointerEvents: 'auto', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none',
+    zIndex: '1'
+  });
+  overlay.appendChild(btnJump);
   const btnAttack = makeBtn('tb-attack', '⚔', {
     width: '54px', height: '54px', right: '96px', bottom: '36px',
     fontSize: '20px', background: 'rgba(255,100,100,0.2)', border: '2px solid rgba(255,100,100,0.4)'
@@ -5138,21 +5312,21 @@ window.addEventListener('keydown', function titleHandler(e) {
   // Track active touches per button
   const activeKeys = {};
 
-  function bindBtn(el, code) {
+  function bindBtn(el, code, visualEl) {
+    const vis = visualEl || el; // element to animate for feedback
     el.addEventListener('touchstart', e => {
       e.preventDefault(); e.stopPropagation();
       if (!activeKeys[code]) {
         activeKeys[code] = true;
         simKey(code, true);
       }
-      el.style.background = el.style.border.includes('120') ? 'rgba(80,200,120,0.45)' :
-        el.style.border.includes('100,100') ? 'rgba(255,100,100,0.45)' : 'rgba(255,255,255,0.3)';
-      el.style.transform = 'scale(0.92)';
+      vis.style.background = vis.style.border.includes('120') ? 'rgba(80,200,120,0.45)' :
+        vis.style.border.includes('100,100') ? 'rgba(255,100,100,0.45)' : 'rgba(255,255,255,0.3)';
+      vis.style.transform = 'scale(0.92)';
     }, { passive: false });
 
     const release = (e) => {
       e.preventDefault(); e.stopPropagation();
-      // Check if any touch is still on this element
       const touches = e.touches;
       const rect = el.getBoundingClientRect();
       let stillTouching = false;
@@ -5166,9 +5340,9 @@ window.addEventListener('keydown', function titleHandler(e) {
       if (!stillTouching && activeKeys[code]) {
         activeKeys[code] = false;
         simKey(code, false);
-        el.style.background = el.style.border.includes('120') ? 'rgba(80,200,120,0.2)' :
-          el.style.border.includes('100,100') ? 'rgba(255,100,100,0.2)' : 'rgba(255,255,255,0.12)';
-        el.style.transform = 'scale(1)';
+        vis.style.background = vis.style.border.includes('120') ? 'rgba(80,200,120,0.2)' :
+          vis.style.border.includes('100,100') ? 'rgba(255,100,100,0.2)' : 'rgba(255,255,255,0.12)';
+        vis.style.transform = 'scale(1)';
       }
     };
     el.addEventListener('touchend', release, { passive: false });
@@ -5179,7 +5353,7 @@ window.addEventListener('keydown', function titleHandler(e) {
   bindBtn(btnRight, 'ArrowRight');
   bindBtn(btnUp, 'ArrowUp');
   bindBtn(btnDown, 'ArrowDown');
-  bindBtn(btnJump, 'Space');
+  bindBtn(btnJump, 'Space', btnJumpVisual);
   bindBtn(btnAttack, 'KeyX');
 
   // Tap-to-start for title screen
@@ -5206,11 +5380,11 @@ window.addEventListener('keydown', function titleHandler(e) {
     if (titleScreen) {
       tapStart.style.display = 'block';
       btnLeft.style.display = btnRight.style.display = btnUp.style.display = btnDown.style.display = 'none';
-      btnJump.style.display = btnAttack.style.display = 'none';
+      btnJump.style.display = btnJumpVisual.style.display = btnAttack.style.display = 'none';
     } else {
       tapStart.style.display = 'none';
       btnLeft.style.display = btnRight.style.display = btnUp.style.display = btnDown.style.display = 'flex';
-      btnJump.style.display = btnAttack.style.display = 'flex';
+      btnJump.style.display = 'block'; btnJumpVisual.style.display = 'flex'; btnAttack.style.display = 'flex';
     }
     requestAnimationFrame(updateTouchUI);
   }
