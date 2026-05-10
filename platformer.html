@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Brumbo Rumble">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1a1a2e">
+<link rel="manifest" href="manifest.json">
 <title>Brumbo Rumble</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -4897,9 +4903,114 @@ window.addEventListener('keydown', function titleHandler(e) {
     fontSize: '20px', background: 'rgba(255,100,100,0.2)', border: '2px solid rgba(255,100,100,0.4)'
   });
 
+  // Fullscreen button
+  const fsBtn = makeBtn('tb-fullscreen', '⛶', {
+    width: '40px', height: '40px', right: '8px', top: '8px',
+    fontSize: '20px', borderRadius: '10px',
+    background: 'rgba(255,255,255,0.08)', border: '2px solid rgba(255,255,255,0.2)'
+  });
+
+  // Detect if we're in standalone mode (added to home screen) or already fullscreen
+  const isStandalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+  const isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
+  let isFullscreen = isStandalone;
+
+  function enterFullscreen() {
+    const el = document.documentElement;
+    // Try standard Fullscreen API (Chrome, Firefox, Samsung Internet, etc.)
+    if (el.requestFullscreen) {
+      el.requestFullscreen().catch(() => {});
+    } else if (el.webkitRequestFullscreen) {
+      el.webkitRequestFullscreen(); // older webkit
+    }
+    // Try screen orientation lock for landscape
+    try {
+      screen.orientation.lock('landscape').catch(() => {});
+    } catch(e) {}
+    isFullscreen = true;
+    fsBtn.textContent = '✕';
+    fsBtn.style.background = 'rgba(255,200,50,0.3)';
+    fsBtn.style.borderColor = 'rgba(255,200,50,0.6)';
+  }
+
+  function exitFullscreen() {
+    if (document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+    try { screen.orientation.unlock(); } catch(e) {}
+    isFullscreen = false;
+    fsBtn.textContent = '⛶';
+    fsBtn.style.background = 'rgba(255,255,255,0.08)';
+    fsBtn.style.borderColor = 'rgba(255,255,255,0.2)';
+  }
+
+  // Track fullscreen state changes
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+      isFullscreen = false;
+      fsBtn.textContent = '⛶';
+      fsBtn.style.background = 'rgba(255,255,255,0.08)';
+      fsBtn.style.borderColor = 'rgba(255,255,255,0.2)';
+    }
+  });
+  document.addEventListener('webkitfullscreenchange', () => {
+    if (!document.webkitFullscreenElement) {
+      isFullscreen = false;
+      fsBtn.textContent = '⛶';
+      fsBtn.style.background = 'rgba(255,255,255,0.08)';
+      fsBtn.style.borderColor = 'rgba(255,255,255,0.2)';
+    }
+  });
+
+  // Safari iOS doesn't support Fullscreen API, so show "Add to Home Screen" prompt
+  let safariPrompt = null;
+  if (isSafari && !isStandalone) {
+    safariPrompt = document.createElement('div');
+    safariPrompt.id = 'safari-fs-prompt';
+    safariPrompt.innerHTML = `
+      <div style="background:rgba(0,0,0,0.92);border-radius:14px;padding:20px 24px;max-width:320px;text-align:center;color:#fff;font-family:monospace;box-shadow:0 4px 24px rgba(0,0,0,0.5);">
+        <div style="font-size:32px;margin-bottom:10px;">📱</div>
+        <div style="font-size:16px;font-weight:bold;margin-bottom:8px;">Go Fullscreen</div>
+        <div style="font-size:13px;opacity:0.8;line-height:1.5;">
+          Tap <span style="font-size:16px;">⬆</span> (Share) at the bottom of Safari,<br>
+          then tap <strong>"Add to Home Screen"</strong>.<br>
+          The game will open fullscreen like an app!
+        </div>
+        <div style="margin-top:14px;padding:8px 16px;background:rgba(255,255,255,0.15);border-radius:8px;display:inline-block;font-size:12px;cursor:pointer;" id="safari-dismiss">Got it</div>
+      </div>`;
+    Object.assign(safariPrompt.style, {
+      position: 'fixed', top: '0', left: '0', width: '100vw', height: '100vh',
+      display: 'none', alignItems: 'center', justifyContent: 'center',
+      zIndex: '100000', background: 'rgba(0,0,0,0.5)'
+    });
+    document.body.appendChild(safariPrompt);
+    safariPrompt.querySelector('#safari-dismiss').addEventListener('touchstart', e => {
+      e.preventDefault();
+      safariPrompt.style.display = 'none';
+    });
+  }
+
+  fsBtn.addEventListener('touchstart', e => {
+    e.preventDefault(); e.stopPropagation();
+    if (isStandalone) return; // already fullscreen as PWA
+    if (isSafari) {
+      // Safari iOS: show Add to Home Screen instructions
+      if (safariPrompt) safariPrompt.style.display = 'flex';
+    } else if (isFullscreen) {
+      exitFullscreen();
+    } else {
+      enterFullscreen();
+    }
+  }, { passive: false });
+
+  // Hide fullscreen button if already in standalone mode
+  if (isStandalone) fsBtn.style.display = 'none';
+
   // Keyboard button (for easter egg codes on mobile)
   const kbBtn = makeBtn('tb-keyboard', '⌨', {
-    width: '40px', height: '40px', right: '8px', top: '8px',
+    width: '40px', height: '40px', right: '8px', top: '56px',
     fontSize: '18px', borderRadius: '10px',
     background: 'rgba(255,255,255,0.08)', border: '2px solid rgba(255,255,255,0.2)'
   });

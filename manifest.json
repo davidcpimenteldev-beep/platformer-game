@@ -1,0 +1,11 @@
+{
+  "name": "Brumbo Rumble",
+  "short_name": "Brumbo",
+  "description": "A browser-based platformer game",
+  "start_url": "/platformer.html",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#1a1a2e",
+  "theme_color": "#1a1a2e",
+  "icons": []
+}
