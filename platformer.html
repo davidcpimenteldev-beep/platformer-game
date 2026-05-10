@@ -4897,6 +4897,80 @@ window.addEventListener('keydown', function titleHandler(e) {
     fontSize: '20px', background: 'rgba(255,100,100,0.2)', border: '2px solid rgba(255,100,100,0.4)'
   });
 
+  // Keyboard button (for easter egg codes on mobile)
+  const kbBtn = makeBtn('tb-keyboard', '⌨', {
+    width: '40px', height: '40px', right: '8px', top: '8px',
+    fontSize: '18px', borderRadius: '10px',
+    background: 'rgba(255,255,255,0.08)', border: '2px solid rgba(255,255,255,0.2)'
+  });
+  // Hidden input to pull up the keyboard
+  const kbInput = document.createElement('input');
+  kbInput.type = 'text';
+  kbInput.autocomplete = 'off';
+  kbInput.autocapitalize = 'none';
+  kbInput.autocorrect = 'off';
+  kbInput.spellcheck = false;
+  Object.assign(kbInput.style, {
+    position: 'fixed', left: '-9999px', top: '0', width: '1px', height: '1px',
+    opacity: '0', fontSize: '16px' // 16px prevents iOS zoom on focus
+  });
+  document.body.appendChild(kbInput);
+
+  let kbOpen = false;
+  kbBtn.addEventListener('touchstart', e => {
+    e.preventDefault(); e.stopPropagation();
+    if (!kbOpen) {
+      kbInput.value = '';
+      kbInput.focus();
+      kbOpen = true;
+      kbBtn.style.background = 'rgba(255,200,50,0.3)';
+      kbBtn.style.borderColor = 'rgba(255,200,50,0.6)';
+      kbBtn.textContent = '✕';
+    } else {
+      kbInput.blur();
+      kbOpen = false;
+      kbBtn.style.background = 'rgba(255,255,255,0.08)';
+      kbBtn.style.borderColor = 'rgba(255,255,255,0.2)';
+      kbBtn.textContent = '⌨';
+    }
+  }, { passive: false });
+
+  // Forward keyboard input keypresses to the game
+  kbInput.addEventListener('input', e => {
+    const data = e.data;
+    if (!data) return;
+    // Send each character as a keydown event
+    for (const ch of data) {
+      const lower = ch.toLowerCase();
+      const code = 'Key' + lower.toUpperCase();
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: lower, code, bubbles: true }));
+      setTimeout(() => {
+        window.dispatchEvent(new KeyboardEvent('keyup', { key: lower, code, bubbles: true }));
+      }, 50);
+    }
+    // Clear so next input fires again
+    setTimeout(() => { kbInput.value = ''; }, 60);
+  });
+
+  // Also handle special keys (enter, backspace)
+  kbInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === 'Escape') {
+      kbInput.blur();
+      kbOpen = false;
+      kbBtn.style.background = 'rgba(255,255,255,0.08)';
+      kbBtn.style.borderColor = 'rgba(255,255,255,0.2)';
+      kbBtn.textContent = '⌨';
+    }
+  });
+
+  // Close keyboard if user taps elsewhere
+  kbInput.addEventListener('blur', () => {
+    kbOpen = false;
+    kbBtn.style.background = 'rgba(255,255,255,0.08)';
+    kbBtn.style.borderColor = 'rgba(255,255,255,0.2)';
+    kbBtn.textContent = '⌨';
+  });
+
   // Tap-to-start zone (for title screen)
   const tapStart = document.createElement('div');
   tapStart.id = 'tap-start';
