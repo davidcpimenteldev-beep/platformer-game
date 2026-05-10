@@ -4915,54 +4915,65 @@ window.addEventListener('keydown', function titleHandler(e) {
   const isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
   let isFullscreen = isStandalone;
 
+  function updateFsBtn(full) {
+    isFullscreen = full;
+    fsBtn.textContent = full ? '✕' : '⛶';
+    fsBtn.style.background = full ? 'rgba(255,200,50,0.3)' : 'rgba(255,255,255,0.08)';
+    fsBtn.style.borderColor = full ? 'rgba(255,200,50,0.6)' : 'rgba(255,255,255,0.2)';
+  }
+
   function enterFullscreen() {
-    const el = document.documentElement;
-    // Try standard Fullscreen API (Chrome, Firefox, Samsung Internet, etc.)
-    if (el.requestFullscreen) {
-      el.requestFullscreen().catch(() => {});
-    } else if (el.webkitRequestFullscreen) {
-      el.webkitRequestFullscreen(); // older webkit
+    // Try every known fullscreen method on both document.documentElement and document.body
+    const targets = [document.documentElement, document.body, canvas];
+    let requested = false;
+    for (const el of targets) {
+      try {
+        if (el.requestFullscreen) {
+          el.requestFullscreen({ navigationUI: 'hide' }).then(() => updateFsBtn(true)).catch(() => {});
+          requested = true; break;
+        }
+      } catch(e) {}
+      try {
+        if (el.webkitRequestFullscreen) {
+          el.webkitRequestFullscreen();
+          requested = true; break;
+        }
+      } catch(e) {}
+      try {
+        if (el.webkitEnterFullscreen) {
+          el.webkitEnterFullscreen();
+          requested = true; break;
+        }
+      } catch(e) {}
+      try {
+        if (el.msRequestFullscreen) {
+          el.msRequestFullscreen();
+          requested = true; break;
+        }
+      } catch(e) {}
     }
+    if (requested) updateFsBtn(true);
     // Try screen orientation lock for landscape
-    try {
-      screen.orientation.lock('landscape').catch(() => {});
-    } catch(e) {}
-    isFullscreen = true;
-    fsBtn.textContent = '✕';
-    fsBtn.style.background = 'rgba(255,200,50,0.3)';
-    fsBtn.style.borderColor = 'rgba(255,200,50,0.6)';
+    try { screen.orientation.lock('landscape').catch(() => {}); } catch(e) {}
   }
 
   function exitFullscreen() {
-    if (document.exitFullscreen) {
-      document.exitFullscreen().catch(() => {});
-    } else if (document.webkitExitFullscreen) {
-      document.webkitExitFullscreen();
-    }
+    try { if (document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch(e) {}
+    try { if (document.webkitExitFullscreen) document.webkitExitFullscreen(); } catch(e) {}
+    try { if (document.webkitCancelFullScreen) document.webkitCancelFullScreen(); } catch(e) {}
+    try { if (document.msExitFullscreen) document.msExitFullscreen(); } catch(e) {}
     try { screen.orientation.unlock(); } catch(e) {}
-    isFullscreen = false;
-    fsBtn.textContent = '⛶';
-    fsBtn.style.background = 'rgba(255,255,255,0.08)';
-    fsBtn.style.borderColor = 'rgba(255,255,255,0.2)';
+    updateFsBtn(false);
   }
 
   // Track fullscreen state changes
-  document.addEventListener('fullscreenchange', () => {
-    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-      isFullscreen = false;
-      fsBtn.textContent = '⛶';
-      fsBtn.style.background = 'rgba(255,255,255,0.08)';
-      fsBtn.style.borderColor = 'rgba(255,255,255,0.2)';
-    }
-  });
-  document.addEventListener('webkitfullscreenchange', () => {
-    if (!document.webkitFullscreenElement) {
-      isFullscreen = false;
-      fsBtn.textContent = '⛶';
-      fsBtn.style.background = 'rgba(255,255,255,0.08)';
-      fsBtn.style.borderColor = 'rgba(255,255,255,0.2)';
-    }
-  });
+  function onFsChange() {
+    const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement || document.webkitCurrentFullScreenElement || document.msFullscreenElement);
+    updateFsBtn(isFull);
+  }
+  document.addEventListener('fullscreenchange', onFsChange);
+  document.addEventListener('webkitfullscreenchange', onFsChange);
+  document.addEventListener('msfullscreenchange', onFsChange);
 
   // Safari iOS doesn't support Fullscreen API, so show "Add to Home Screen" prompt
   let safariPrompt = null;
@@ -4992,18 +5003,26 @@ window.addEventListener('keydown', function titleHandler(e) {
     });
   }
 
+  // Chrome requires fullscreen from a 'click' event — 'touchstart' alone won't work.
+  // Use click for the actual fullscreen call, touchstart just for visual feedback.
   fsBtn.addEventListener('touchstart', e => {
+    e.stopPropagation();
+    fsBtn.style.transform = 'scale(0.9)';
+  }, { passive: true });
+  fsBtn.addEventListener('touchend', e => {
+    fsBtn.style.transform = 'scale(1)';
+  }, { passive: true });
+  fsBtn.addEventListener('click', e => {
     e.preventDefault(); e.stopPropagation();
-    if (isStandalone) return; // already fullscreen as PWA
+    if (isStandalone) return;
     if (isSafari) {
-      // Safari iOS: show Add to Home Screen instructions
       if (safariPrompt) safariPrompt.style.display = 'flex';
     } else if (isFullscreen) {
       exitFullscreen();
     } else {
       enterFullscreen();
     }
-  }, { passive: false });
+  });
 
   // Hide fullscreen button if already in standalone mode
   if (isStandalone) fsBtn.style.display = 'none';
