@@ -4917,59 +4917,78 @@ window.addEventListener('keydown', function titleHandler(e) {
   document.body.appendChild(kbInput);
 
   let kbOpen = false;
-  kbBtn.addEventListener('touchstart', e => {
-    e.preventDefault(); e.stopPropagation();
-    if (!kbOpen) {
-      kbInput.value = '';
-      kbInput.focus();
-      kbOpen = true;
-      kbBtn.style.background = 'rgba(255,200,50,0.3)';
-      kbBtn.style.borderColor = 'rgba(255,200,50,0.6)';
-      kbBtn.textContent = '✕';
-    } else {
-      kbInput.blur();
-      kbOpen = false;
-      kbBtn.style.background = 'rgba(255,255,255,0.08)';
-      kbBtn.style.borderColor = 'rgba(255,255,255,0.2)';
-      kbBtn.textContent = '⌨';
-    }
-  }, { passive: false });
-
-  // Forward keyboard input keypresses to the game
-  kbInput.addEventListener('input', e => {
-    const data = e.data;
-    if (!data) return;
-    // Send each character as a keydown event
-    for (const ch of data) {
-      const lower = ch.toLowerCase();
-      const code = 'Key' + lower.toUpperCase();
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: lower, code, bubbles: true }));
-      setTimeout(() => {
-        window.dispatchEvent(new KeyboardEvent('keyup', { key: lower, code, bubbles: true }));
-      }, 50);
-    }
-    // Clear so next input fires again
-    setTimeout(() => { kbInput.value = ''; }, 60);
-  });
-
-  // Also handle special keys (enter, backspace)
-  kbInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === 'Escape') {
-      kbInput.blur();
-      kbOpen = false;
-      kbBtn.style.background = 'rgba(255,255,255,0.08)';
-      kbBtn.style.borderColor = 'rgba(255,255,255,0.2)';
-      kbBtn.textContent = '⌨';
-    }
-  });
-
-  // Close keyboard if user taps elsewhere
-  kbInput.addEventListener('blur', () => {
+  function openKb() {
+    kbInput.value = '';
+    lastValue = '';
+    kbInput.focus();
+    startPolling();
+    kbOpen = true;
+    kbBtn.style.background = 'rgba(255,200,50,0.3)';
+    kbBtn.style.borderColor = 'rgba(255,200,50,0.6)';
+    kbBtn.textContent = '✕';
+  }
+  function closeKb() {
+    kbInput.blur();
+    stopPolling();
     kbOpen = false;
     kbBtn.style.background = 'rgba(255,255,255,0.08)';
     kbBtn.style.borderColor = 'rgba(255,255,255,0.2)';
     kbBtn.textContent = '⌨';
+  }
+  kbBtn.addEventListener('touchstart', e => {
+    e.preventDefault(); e.stopPropagation();
+    if (!kbOpen) openKb(); else closeKb();
+  }, { passive: false });
+
+  // Forward mobile keyboard input to the game.
+  // Mobile virtual keyboards are unreliable with keydown — some fire it,
+  // some don't, some fire it with key='Unidentified'. The only reliable
+  // approach is polling the input value for changes.
+  let lastValue = '';
+  let pollId = null;
+
+  function startPolling() {
+    if (pollId) return;
+    pollId = setInterval(() => {
+      const cur = kbInput.value;
+      if (cur !== lastValue) {
+        // Find new characters added
+        const newChars = cur.slice(lastValue.length);
+        lastValue = cur;
+        for (const ch of newChars) {
+          const lower = ch.toLowerCase();
+          if (lower.length !== 1 || lower < 'a' || lower > 'z') continue;
+          const code = 'Key' + lower.toUpperCase();
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: lower, code, bubbles: true, cancelable: true }));
+          setTimeout(() => {
+            window.dispatchEvent(new KeyboardEvent('keyup', { key: lower, code, bubbles: true, cancelable: true }));
+          }, 60);
+        }
+        // Keep value but cap length to avoid overflow
+        if (cur.length > 50) {
+          kbInput.value = cur.slice(-20);
+          lastValue = kbInput.value;
+        }
+      }
+    }, 50); // 50ms poll — fast enough for typing
+  }
+
+  function stopPolling() {
+    if (pollId) { clearInterval(pollId); pollId = null; }
+    lastValue = '';
+    kbInput.value = '';
+  }
+
+  // Also listen for Enter to close
+  kbInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === 'Escape') {
+      kbInput.blur();
+      e.preventDefault();
+    }
   });
+
+  // Close keyboard if user taps elsewhere
+  kbInput.addEventListener('blur', () => { closeKb(); });
 
   // Tap-to-start zone (for title screen)
   const tapStart = document.createElement('div');
