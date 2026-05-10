@@ -4545,7 +4545,8 @@ const Breakout = (() => {
       c.textAlign = 'center';
       c.fillStyle = '#ffffff88';
       c.font = '14px monospace';
-      c.fillText('Press SPACE to launch', W / 2, H - 10);
+      const isMobBr = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && navigator.maxTouchPoints > 1);
+      c.fillText(isMobBr ? 'Tap Jump to launch' : 'Press SPACE to launch', W / 2, H - 10);
     }
 
     // bananas caught counter
@@ -4770,14 +4771,16 @@ function drawTitleScreen() {
     ctx.font = '18px monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#fff';
-    ctx.fillText('Press SPACE to start', W / 2, H * 0.88);
+    const isMob = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && navigator.maxTouchPoints > 1);
+    ctx.fillText(isMob ? 'Tap to start' : 'Press SPACE to start', W / 2, H * 0.88);
   }
 
   // controls hint
   ctx.font = '12px monospace';
   ctx.textAlign = 'center';
   ctx.fillStyle = '#ffffff66';
-  ctx.fillText('← → Move  |  SPACE Jump  |  SHIFT Dash  |  M Mute', W / 2, H * 0.95);
+  const isMob2 = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && navigator.maxTouchPoints > 1);
+  ctx.fillText(isMob2 ? 'D-Pad Move  |  ⬆ Jump  |  ⚔ Attack' : '← → Move  |  SPACE Jump  |  SHIFT Dash  |  M Mute', W / 2, H * 0.95);
 }
 
 // Start with title screen
@@ -4792,6 +4795,216 @@ window.addEventListener('keydown', function titleHandler(e) {
     e.preventDefault();
   }
 });
+
+// ============================================================
+// MOBILE TOUCH CONTROLS
+// ============================================================
+(function initMobileControls() {
+  const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+    || ('ontouchstart' in window && navigator.maxTouchPoints > 1);
+  if (!isMobile) return;
+
+  // Prevent default touch behaviors (zoom, scroll)
+  document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+  document.addEventListener('gesturestart', e => e.preventDefault());
+
+  // Fix viewport for mobile
+  let meta = document.querySelector('meta[name="viewport"]');
+  if (meta) meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
+
+  // --- Landscape prompt overlay ---
+  const rotateOverlay = document.createElement('div');
+  rotateOverlay.id = 'rotate-prompt';
+  rotateOverlay.innerHTML = `
+    <div style="text-align:center;color:#fff;font-family:monospace;">
+      <div style="font-size:48px;margin-bottom:16px;">📱↔️</div>
+      <div style="font-size:20px;font-weight:bold;">Rotate your device</div>
+      <div style="font-size:14px;margin-top:8px;opacity:0.7;">Landscape mode required</div>
+    </div>`;
+  Object.assign(rotateOverlay.style, {
+    position: 'fixed', top: '0', left: '0', width: '100vw', height: '100vh',
+    background: 'rgba(0,0,0,0.95)', display: 'none', alignItems: 'center',
+    justifyContent: 'center', zIndex: '99999', flexDirection: 'column'
+  });
+  document.body.appendChild(rotateOverlay);
+
+  function checkOrientation() {
+    const isPortrait = window.innerHeight > window.innerWidth;
+    rotateOverlay.style.display = isPortrait ? 'flex' : 'none';
+  }
+  window.addEventListener('resize', checkOrientation);
+  screen.orientation && screen.orientation.addEventListener('change', checkOrientation);
+  checkOrientation();
+
+  // --- Touch control overlay ---
+  const overlay = document.createElement('div');
+  overlay.id = 'touch-controls';
+  Object.assign(overlay.style, {
+    position: 'fixed', top: '0', left: '0', width: '100%', height: '100%',
+    zIndex: '1000', pointerEvents: 'none', userSelect: 'none',
+    WebkitUserSelect: 'none', touchAction: 'none'
+  });
+  document.body.appendChild(overlay);
+
+  // Button factory
+  function makeBtn(id, label, style) {
+    const btn = document.createElement('div');
+    btn.id = id;
+    btn.textContent = label;
+    Object.assign(btn.style, {
+      position: 'absolute', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      borderRadius: '50%', background: 'rgba(255,255,255,0.12)', border: '2px solid rgba(255,255,255,0.25)',
+      color: 'rgba(255,255,255,0.6)', fontFamily: 'monospace', fontWeight: 'bold',
+      pointerEvents: 'auto', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none',
+      transition: 'background 0.08s, transform 0.08s', ...style
+    });
+    overlay.appendChild(btn);
+    return btn;
+  }
+
+  // D-pad buttons (left side)
+  const dpadSize = '58px';
+  const dpadBottom = '20px';
+  const btnLeft = makeBtn('tb-left', '◀', {
+    width: dpadSize, height: dpadSize, left: '16px', bottom: `calc(${dpadBottom} + 34px)`,
+    fontSize: '22px'
+  });
+  const btnRight = makeBtn('tb-right', '▶', {
+    width: dpadSize, height: dpadSize, left: `calc(16px + ${dpadSize} + 14px)`, bottom: `calc(${dpadBottom} + 34px)`,
+    fontSize: '22px'
+  });
+  const btnUp = makeBtn('tb-up', '▲', {
+    width: '50px', height: '50px',
+    left: `calc(16px + (${dpadSize} + 14px) / 2 - 25px + ${dpadSize} / 2)`,
+    bottom: `calc(${dpadBottom} + 34px + ${dpadSize} + 8px)`,
+    fontSize: '18px'
+  });
+  const btnDown = makeBtn('tb-down', '▼', {
+    width: '50px', height: '50px',
+    left: `calc(16px + (${dpadSize} + 14px) / 2 - 25px + ${dpadSize} / 2)`,
+    bottom: dpadBottom,
+    fontSize: '18px'
+  });
+
+  // Action buttons (right side)
+  const actSize = '64px';
+  const btnJump = makeBtn('tb-jump', '⬆', {
+    width: actSize, height: actSize, right: '24px', bottom: '90px',
+    fontSize: '26px', background: 'rgba(80,200,120,0.2)', border: '2px solid rgba(80,200,120,0.4)'
+  });
+  const btnAttack = makeBtn('tb-attack', '⚔', {
+    width: '54px', height: '54px', right: '96px', bottom: '36px',
+    fontSize: '20px', background: 'rgba(255,100,100,0.2)', border: '2px solid rgba(255,100,100,0.4)'
+  });
+
+  // Tap-to-start zone (for title screen)
+  const tapStart = document.createElement('div');
+  tapStart.id = 'tap-start';
+  Object.assign(tapStart.style, {
+    position: 'absolute', top: '0', left: '0', width: '100%', height: '100%',
+    pointerEvents: 'auto', touchAction: 'none', zIndex: '999'
+  });
+  overlay.appendChild(tapStart);
+
+  // --- Key simulation ---
+  function simKey(code, down) {
+    const type = down ? 'keydown' : 'keyup';
+    window.dispatchEvent(new KeyboardEvent(type, { code, bubbles: true }));
+  }
+
+  // Track active touches per button
+  const activeKeys = {};
+
+  function bindBtn(el, code) {
+    el.addEventListener('touchstart', e => {
+      e.preventDefault(); e.stopPropagation();
+      if (!activeKeys[code]) {
+        activeKeys[code] = true;
+        simKey(code, true);
+      }
+      el.style.background = el.style.border.includes('120') ? 'rgba(80,200,120,0.45)' :
+        el.style.border.includes('100,100') ? 'rgba(255,100,100,0.45)' : 'rgba(255,255,255,0.3)';
+      el.style.transform = 'scale(0.92)';
+    }, { passive: false });
+
+    const release = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      // Check if any touch is still on this element
+      const touches = e.touches;
+      const rect = el.getBoundingClientRect();
+      let stillTouching = false;
+      for (let i = 0; i < touches.length; i++) {
+        const t = touches[i];
+        if (t.clientX >= rect.left && t.clientX <= rect.right &&
+            t.clientY >= rect.top && t.clientY <= rect.bottom) {
+          stillTouching = true; break;
+        }
+      }
+      if (!stillTouching && activeKeys[code]) {
+        activeKeys[code] = false;
+        simKey(code, false);
+        el.style.background = el.style.border.includes('120') ? 'rgba(80,200,120,0.2)' :
+          el.style.border.includes('100,100') ? 'rgba(255,100,100,0.2)' : 'rgba(255,255,255,0.12)';
+        el.style.transform = 'scale(1)';
+      }
+    };
+    el.addEventListener('touchend', release, { passive: false });
+    el.addEventListener('touchcancel', release, { passive: false });
+  }
+
+  bindBtn(btnLeft, 'ArrowLeft');
+  bindBtn(btnRight, 'ArrowRight');
+  bindBtn(btnUp, 'ArrowUp');
+  bindBtn(btnDown, 'ArrowDown');
+  bindBtn(btnJump, 'Space');
+  bindBtn(btnAttack, 'KeyX');
+
+  // Tap-to-start for title screen
+  tapStart.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (titleScreen) {
+      simKey('Space', true);
+      setTimeout(() => simKey('Space', false), 100);
+    }
+    // Also handle banana shop clicks
+    if (Banana.isActive()) {
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = W / rect.width;
+      const scaleY = H / rect.height;
+      const cx = (touch.clientX - rect.left) * scaleX;
+      const cy = (touch.clientY - rect.top) * scaleY;
+      Banana.handleClick(cx, cy);
+    }
+  }, { passive: false });
+
+  // Show/hide tap-start vs dpad based on game state
+  function updateTouchUI() {
+    if (titleScreen) {
+      tapStart.style.display = 'block';
+      btnLeft.style.display = btnRight.style.display = btnUp.style.display = btnDown.style.display = 'none';
+      btnJump.style.display = btnAttack.style.display = 'none';
+    } else {
+      tapStart.style.display = 'none';
+      btnLeft.style.display = btnRight.style.display = btnUp.style.display = btnDown.style.display = 'flex';
+      btnJump.style.display = btnAttack.style.display = 'flex';
+    }
+    requestAnimationFrame(updateTouchUI);
+  }
+  updateTouchUI();
+
+  // Also allow tapping the canvas area for god scene exit etc.
+  canvas.addEventListener('touchstart', e => {
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    // Simulate a click event for canvas handlers
+    canvas.dispatchEvent(new MouseEvent('click', {
+      clientX: touch.clientX, clientY: touch.clientY,
+      bubbles: true
+    }));
+  }, { passive: true });
+
+})();
 </script>
 </body>
 </html>
