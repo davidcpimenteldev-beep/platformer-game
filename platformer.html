@@ -4877,7 +4877,37 @@ const MetaShop = (() => {
     c.fillText(isMob ? '↑↓ Navigate  |  Tap Jump to select' : '↑↓ Navigate  |  SPACE Select', W/2, H - 12);
   }
 
-  return { show, isActive, handleInput, draw };
+  function handleTap(cx, cy) {
+    if (!active) return;
+    const startY = 65;
+    const cardH = 52;
+    const cardW = 360;
+    const colGap = 20;
+
+    // check item cards
+    for (let i = 0; i < ITEMS.length; i++) {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const rx = col === 0 ? W/2 - cardW - colGap/2 : W/2 + colGap/2;
+      const ry = startY + row * (cardH + 8);
+      if (cx >= rx && cx <= rx + cardW && cy >= ry && cy <= ry + cardH) {
+        cursor = i;
+        handleInput('Space');
+        return;
+      }
+    }
+
+    // check START RUN button
+    const btnY = startY + Math.ceil(ITEMS.length / 2) * (cardH + 8) + 15;
+    const btnW = 200;
+    if (cx >= W/2 - btnW/2 && cx <= W/2 + btnW/2 && cy >= btnY && cy <= btnY + 45) {
+      cursor = ITEMS.length;
+      handleInput('Space');
+      return;
+    }
+  }
+
+  return { show, isActive, handleInput, handleTap, draw };
 })();
 
 // ============================================================
@@ -6743,12 +6773,24 @@ window.addEventListener('keydown', function titleHandler(e) {
   bindBtn(btnJump, 'Space', btnJumpVisual);
   bindBtn(btnAttack, 'KeyX');
 
-  // Tap-to-start for title screen
+  // Tap-to-start for title screen + shop tapping
   tapStart.addEventListener('touchstart', e => {
     e.preventDefault();
     if (titleScreen) {
       simKey('Space', true);
       setTimeout(() => simKey('Space', false), 100);
+      return;
+    }
+    // MetaShop — tap items or START RUN directly
+    if (typeof state !== 'undefined' && state === 'metashop' && MetaShop.isActive()) {
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = W / rect.width;
+      const scaleY = H / rect.height;
+      const cx = (touch.clientX - rect.left) * scaleX;
+      const cy = (touch.clientY - rect.top) * scaleY;
+      MetaShop.handleTap(cx, cy);
+      return;
     }
     // Also handle banana shop clicks
     if (Banana.isActive()) {
@@ -6762,6 +6804,20 @@ window.addEventListener('keydown', function titleHandler(e) {
     }
   }, { passive: false });
 
+  // Tap-to-select in MetaShop (tap items or START RUN directly)
+  canvas.addEventListener('touchstart', e => {
+    if (typeof state !== 'undefined' && state === 'metashop' && MetaShop.isActive()) {
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = W / rect.width;
+      const scaleY = H / rect.height;
+      const cx = (touch.clientX - rect.left) * scaleX;
+      const cy = (touch.clientY - rect.top) * scaleY;
+      MetaShop.handleTap(cx, cy);
+      e.preventDefault();
+    }
+  }, { passive: false });
+
   // Show/hide tap-start vs dpad based on game state
   function updateTouchUI() {
     if (titleScreen) {
@@ -6769,8 +6825,8 @@ window.addEventListener('keydown', function titleHandler(e) {
       btnLeft.style.display = btnRight.style.display = btnUp.style.display = btnDown.style.display = 'none';
       btnJump.style.display = btnJumpVisual.style.display = btnAttack.style.display = 'none';
     } else if (typeof state !== 'undefined' && state === 'metashop') {
-      // In shop: show up/down + jump (as select), hide left/right/attack
-      tapStart.style.display = 'none';
+      // In shop: show tap overlay for direct tapping + up/down + jump as select
+      tapStart.style.display = 'block';
       btnLeft.style.display = btnRight.style.display = 'none';
       btnUp.style.display = btnDown.style.display = 'flex';
       btnJump.style.display = 'block'; btnJumpVisual.style.display = 'flex';
