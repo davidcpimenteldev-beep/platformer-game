@@ -907,11 +907,28 @@ function generateLevel(levelNum) {
     chunkIndex++;
   }
 
+  // checkpoints — place 2 flags at 1/3 and 2/3 of level
+  const checkpoints = [];
+  const totalLen = curX + 220;
+  for (let ci = 1; ci <= 2; ci++) {
+    const targetX = totalLen * ci / 3;
+    // find the platform closest to targetX to anchor the checkpoint
+    let bestPlat = null, bestDist = Infinity;
+    for (const p of platforms) {
+      if (p.isGoal || p.isSpring || p.breakable) continue;
+      const dist = Math.abs((p.x + p.w / 2) - targetX);
+      if (dist < bestDist) { bestDist = dist; bestPlat = p; }
+    }
+    if (bestPlat) {
+      checkpoints.push({ x: bestPlat.x + bestPlat.w / 2, y: bestPlat.y, activated: false });
+    }
+  }
+
   // goal flag
   const goalY = Math.min(curY, H - 60);
   platforms.push({ x: curX + 100, y: goalY, w: 120, h: 40, isGoal: true });
 
-  return { platforms, enemies, coins, powerups, theme, levelEnd: curX + 220 };
+  return { platforms, enemies, coins, powerups, theme, levelEnd: curX + 220, checkpoints };
 }
 
 // ============================================================
@@ -919,6 +936,8 @@ function generateLevel(levelNum) {
 // ============================================================
 let level, player, camera, score, lives, state, deathTimer, currentLevel, comboCount, comboTimer;
 let musicMuted = false;
+let unlimitedLives = false;
+let lastCheckpoint = null; // { x, y, camX } or null
 
 function makePlayer() {
   return {
@@ -997,6 +1016,7 @@ function startLevel(num) {
   camera = { x: 0 };
   state = 'playing';
   deathTimer = 0;
+  lastCheckpoint = null;
   particles.length = 0;
   floatingTexts.length = 0;
   hideOverlay();
@@ -1027,13 +1047,20 @@ function showOverlay(title, titleColor, text, btnText, btnAction) {
 function hideOverlay() { document.getElementById('overlay').style.display = 'none'; }
 
 function respawn() {
-  player.x = 80; player.y = H - 80;
+  if (lastCheckpoint) {
+    player.x = lastCheckpoint.x - player.w / 2;
+    player.y = lastCheckpoint.y - player.h;
+    camera.x = lastCheckpoint.camX;
+  } else {
+    player.x = 80; player.y = H - 80;
+    camera.x = 0;
+  }
   player.vx = 0; player.vy = 0;
   player.dashing = false; player.dashTimer = 0;
+  player.groundPounding = false;
   player.wallSliding = false;
   player.scaleX = 1; player.scaleY = 1;
   player.targetScaleX = 1; player.targetScaleY = 1;
-  camera.x = 0;
 }
 
 function rectCollide(a, b) {
@@ -1052,7 +1079,7 @@ function update() {
   if (deathTimer > 0) {
     deathTimer--;
     if (deathTimer === 0) {
-      if (lives <= 0) {
+      if (!unlimitedLives && lives <= 0) {
         state = 'gameover';
         playSound('die');
         const earned = Math.floor(score / 100);
@@ -1371,10 +1398,24 @@ function update() {
   else if (player.wasGrounded && !player.grounded) { /* coyote starts */ }
   else { if (player.coyoteTimer > 0) player.coyoteTimer--; }
 
+  // --- checkpoint activation ---
+  if (level.checkpoints) {
+    for (const cp of level.checkpoints) {
+      if (!cp.activated && Math.abs((player.x + player.w / 2) - cp.x) < 30 && Math.abs((player.y + player.h) - cp.y) < 50) {
+        cp.activated = true;
+        lastCheckpoint = { x: cp.x, y: cp.y, camX: camera.x };
+        playSound('powerup');
+        triggerShake(2, 4);
+        floatingTexts.push({ x: cp.x, y: cp.y - 40, text: 'CHECKPOINT!', color: '#4ecca3', life: 60 });
+        spawnParticles(cp.x, cp.y - 20, 12, '#4ecca3', { spread: 5, life: 20, size: 3, vy: -2 });
+      }
+    }
+  }
+
   // --- fall death ---
   if (player.y > H + 80) {
     player.groundPounding = false;
-    lives--;
+    if (!unlimitedLives) lives--;
     deathTimer = 40;
     playSound('hurt');
     triggerShake(5, 10);
@@ -1515,7 +1556,7 @@ function update() {
         // touching stunned golem is safe — just push player away
         player.x += player.x < e.x ? -3 : 3;
       } else {
-        lives--;
+        if (!unlimitedLives) lives--;
         deathTimer = 40;
         playSound('hurt');
         triggerShake(5, 10);
@@ -1567,7 +1608,7 @@ function update() {
         spawnParticles(b.x, b.y, 10, '#ffd700', { spread: 6, life: 15, gravity: 0.05 });
         playSound('break');
       }
-      lives--;
+      if (!unlimitedLives) lives--;
       deathTimer = 40;
       playSound('hurt');
       triggerShake(5, 10);
@@ -2491,16 +2532,23 @@ function drawHUD() {
   ctx.fillStyle = '#ffd700';
   ctx.fillText('Score: ' + score, 12, 22);
 
-  // hearts
-  ctx.fillStyle = '#e94560';
-  for (let i = 0; i < lives; i++) {
-    const hx = 180 + i * 22;
-    ctx.beginPath();
-    ctx.moveTo(hx, 18); ctx.bezierCurveTo(hx, 12, hx - 8, 10, hx - 8, 16);
-    ctx.bezierCurveTo(hx - 8, 20, hx, 24, hx, 26);
-    ctx.bezierCurveTo(hx, 24, hx + 8, 20, hx + 8, 16);
-    ctx.bezierCurveTo(hx + 8, 10, hx, 12, hx, 18);
-    ctx.fill();
+  // hearts or unlimited indicator
+  if (unlimitedLives) {
+    ctx.fillStyle = '#ffd700';
+    ctx.font = 'bold 16px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('♾ ∞', 175, 23);
+  } else {
+    ctx.fillStyle = '#e94560';
+    for (let i = 0; i < lives; i++) {
+      const hx = 180 + i * 22;
+      ctx.beginPath();
+      ctx.moveTo(hx, 18); ctx.bezierCurveTo(hx, 12, hx - 8, 10, hx - 8, 16);
+      ctx.bezierCurveTo(hx - 8, 20, hx, 24, hx, 26);
+      ctx.bezierCurveTo(hx, 24, hx + 8, 20, hx + 8, 16);
+      ctx.bezierCurveTo(hx + 8, 10, hx, 12, hx, 18);
+      ctx.fill();
+    }
   }
 
   // level name
@@ -2581,6 +2629,7 @@ function draw() {
 
   drawBg();
   drawPlatforms();
+  drawCheckpoints();
   drawPowerups();
   drawCoins();
   drawEnemies();
@@ -2591,6 +2640,84 @@ function draw() {
   ctx.restore();
 
   drawHUD();
+}
+
+function drawCheckpoints() {
+  if (!level || !level.checkpoints) return;
+  const t = performance.now() * 0.003;
+  for (const cp of level.checkpoints) {
+    const sx = cp.x - camera.x;
+    const sy = cp.y;
+    if (sx < -60 || sx > W + 60) continue;
+
+    // glow circle behind everything
+    if (cp.activated) {
+      ctx.globalAlpha = 0.12 + Math.sin(t * 3) * 0.08;
+      ctx.fillStyle = '#4ecca3';
+      ctx.beginPath();
+      ctx.arc(sx, sy - 35, 28, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // flag pole
+    ctx.strokeStyle = cp.activated ? '#ccc' : '#777';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx, sy - 65);
+    ctx.stroke();
+
+    // pole cap
+    ctx.fillStyle = cp.activated ? '#ffd700' : '#888';
+    ctx.beginPath();
+    ctx.arc(sx, sy - 65, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // flag
+    if (cp.activated) {
+      // green waving flag
+      const wave = Math.sin(t * 3) * 4;
+      ctx.fillStyle = '#4ecca3';
+      ctx.beginPath();
+      ctx.moveTo(sx + 2, sy - 63);
+      ctx.lineTo(sx + 28 + wave, sy - 55);
+      ctx.lineTo(sx + 26 + wave * 0.7, sy - 43);
+      ctx.lineTo(sx + 2, sy - 38);
+      ctx.fill();
+      // flag stripe
+      ctx.fillStyle = '#3aad8a';
+      ctx.beginPath();
+      ctx.moveTo(sx + 2, sy - 50);
+      ctx.lineTo(sx + 27 + wave * 0.85, sy - 49);
+      ctx.lineTo(sx + 26 + wave * 0.7, sy - 43);
+      ctx.lineTo(sx + 2, sy - 38);
+      ctx.fill();
+    } else {
+      // grey limp flag
+      ctx.fillStyle = '#666';
+      ctx.beginPath();
+      ctx.moveTo(sx + 2, sy - 63);
+      ctx.lineTo(sx + 22, sy - 57);
+      ctx.lineTo(sx + 20, sy - 45);
+      ctx.lineTo(sx + 2, sy - 40);
+      ctx.fill();
+      // darker stripe
+      ctx.fillStyle = '#555';
+      ctx.beginPath();
+      ctx.moveTo(sx + 2, sy - 52);
+      ctx.lineTo(sx + 21, sy - 51);
+      ctx.lineTo(sx + 20, sy - 45);
+      ctx.lineTo(sx + 2, sy - 40);
+      ctx.fill();
+    }
+
+    // base plate
+    ctx.fillStyle = cp.activated ? '#4ecca3' : '#555';
+    ctx.fillRect(sx - 8, sy - 4, 16, 5);
+    ctx.fillStyle = cp.activated ? '#3aad8a' : '#444';
+    ctx.fillRect(sx - 6, sy - 1, 12, 3);
+  }
 }
 
 // ============================================================
@@ -6011,6 +6138,7 @@ draw = function() {
 
   drawBg();
   drawPlatforms();
+  drawCheckpoints();
   drawPowerups();
   drawCoins();
   drawEnemies();
@@ -6174,7 +6302,24 @@ function drawTitleScreen() {
     ctx.textAlign = 'center';
     ctx.fillStyle = '#fff';
     const isMob = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && navigator.maxTouchPoints > 1);
-    ctx.fillText(isMob ? 'Tap to start' : 'Press SPACE to start', W / 2, H * 0.88);
+    ctx.fillText(isMob ? 'Tap to start' : 'Press SPACE to start', W / 2, H * 0.82);
+  }
+
+  // mode toggle
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'center';
+  const isMobMode = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && navigator.maxTouchPoints > 1);
+  ctx.fillStyle = '#ffffff55';
+  ctx.fillText(isMobMode ? '< Tap arrows to switch >' : '< ← →  to switch mode >', W / 2, H * 0.875);
+  // mode label
+  if (unlimitedLives) {
+    ctx.fillStyle = '#ffd700';
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText('♾  UNLIMITED LIVES', W / 2, H * 0.91);
+  } else {
+    ctx.fillStyle = '#4ecca3';
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText('♥  NORMAL MODE', W / 2, H * 0.91);
   }
 
   // controls hint
@@ -6182,7 +6327,7 @@ function drawTitleScreen() {
   ctx.textAlign = 'center';
   ctx.fillStyle = '#ffffff66';
   const isMob2 = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && navigator.maxTouchPoints > 1);
-  ctx.fillText(isMob2 ? 'D-Pad Move  |  ⬆ Jump  |  ⚔ Attack' : '← → Move  |  SPACE Jump  |  SHIFT Dash  |  M Mute', W / 2, H * 0.95);
+  ctx.fillText(isMob2 ? 'D-Pad Move  |  ⬆ Jump  |  ⚔ Attack' : '← → Move  |  SPACE Jump  |  SHIFT Dash  |  M Mute', W / 2, H * 0.97);
 }
 
 // Start with title screen
@@ -6195,6 +6340,12 @@ window.addEventListener('keydown', function titleHandler(e) {
     titleScreen = false;
     state = 'metashop';
     MetaShop.show();
+    e.preventDefault();
+  }
+  // toggle unlimited lives on title screen
+  if (titleScreen && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
+    unlimitedLives = !unlimitedLives;
+    playSound('coin');
     e.preventDefault();
   }
 });
