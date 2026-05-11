@@ -4685,13 +4685,26 @@ window.addEventListener('keydown', e => {
 
 // mouse handling for banana screen
 canvas.addEventListener('click', e => {
-  if (!Banana.isActive()) return;
   const rect = canvas.getBoundingClientRect();
   const scaleX = W / rect.width;
   const scaleY = H / rect.height;
   const cx = (e.clientX - rect.left) * scaleX;
   const cy = (e.clientY - rect.top) * scaleY;
-  Banana.handleClick(cx, cy);
+
+  // Title screen — click mode buttons
+  if (titleScreen) {
+    handleTitleTap(cx, cy);
+    return;
+  }
+  // MetaShop — click items / START RUN
+  if (typeof state !== 'undefined' && state === 'metashop' && MetaShop.isActive()) {
+    MetaShop.handleTap(cx, cy);
+    return;
+  }
+  // Banana clicker
+  if (Banana.isActive()) {
+    Banana.handleClick(cx, cy);
+  }
 });
 
 canvas.addEventListener('wheel', e => {
@@ -4873,8 +4886,7 @@ const MetaShop = (() => {
     c.font = '11px monospace';
     c.fillStyle = '#fff5';
     c.textAlign = 'center';
-    const isMob = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && navigator.maxTouchPoints > 1);
-    c.fillText(isMob ? '↑↓ Navigate  |  Tap Jump to select' : '↑↓ Navigate  |  SPACE Select', W/2, H - 12);
+    c.fillText('Tap to select  |  ↑↓ to browse', W/2, H - 12);
   }
 
   function handleTap(cx, cy) {
@@ -6326,56 +6338,86 @@ function drawTitleScreen() {
   ctx.fillRect(enemyX + 6, enemyY + 8, 3, 3);
   ctx.fillRect(enemyX + 16, enemyY + 8, 3, 3);
 
-  // "Press SPACE to start" with blinking
-  if (Math.floor(titleTimer / 30) % 2 === 0) {
-    ctx.font = '18px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#fff';
-    const isMob = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && navigator.maxTouchPoints > 1);
-    ctx.fillText(isMob ? 'Tap to start' : 'Press SPACE to start', W / 2, H * 0.82);
-  }
+  // Two mode buttons side by side
+  const btnW = 180, btnH = 44;
+  const gap = 20;
+  const btnY2 = H * 0.8;
+  const normalX = W / 2 - btnW - gap / 2;
+  const unlimX = W / 2 + gap / 2;
 
-  // mode toggle
-  ctx.font = 'bold 14px monospace';
+  // Normal mode button
+  ctx.fillStyle = 'rgba(78,204,163,0.2)';
+  ctx.fillRect(normalX, btnY2, btnW, btnH);
+  ctx.strokeStyle = '#4ecca3';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(normalX, btnY2, btnW, btnH);
+  ctx.font = 'bold 16px monospace';
   ctx.textAlign = 'center';
-  const isMobMode = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && navigator.maxTouchPoints > 1);
-  ctx.fillStyle = '#ffffff55';
-  ctx.fillText(isMobMode ? '< Tap arrows to switch >' : '< ← →  to switch mode >', W / 2, H * 0.875);
-  // mode label
-  if (unlimitedLives) {
-    ctx.fillStyle = '#ffd700';
-    ctx.font = 'bold 16px monospace';
-    ctx.fillText('♾  UNLIMITED LIVES', W / 2, H * 0.91);
-  } else {
-    ctx.fillStyle = '#4ecca3';
-    ctx.font = 'bold 16px monospace';
-    ctx.fillText('♥  NORMAL MODE', W / 2, H * 0.91);
-  }
+  ctx.fillStyle = '#4ecca3';
+  ctx.fillText('♥  NORMAL', normalX + btnW / 2, btnY2 + 28);
+
+  // Unlimited lives button
+  ctx.fillStyle = 'rgba(255,215,0,0.15)';
+  ctx.fillRect(unlimX, btnY2, btnW, btnH);
+  ctx.strokeStyle = '#ffd700';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(unlimX, btnY2, btnW, btnH);
+  ctx.font = 'bold 16px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd700';
+  ctx.fillText('♾  UNLIMITED', unlimX + btnW / 2, btnY2 + 28);
 
   // controls hint
   ctx.font = '12px monospace';
   ctx.textAlign = 'center';
   ctx.fillStyle = '#ffffff66';
   const isMob2 = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && navigator.maxTouchPoints > 1);
-  ctx.fillText(isMob2 ? 'D-Pad Move  |  ⬆ Jump  |  ⚔ Attack' : '← → Move  |  SPACE Jump  |  SHIFT Dash  |  M Mute', W / 2, H * 0.97);
+  ctx.fillText(isMob2 ? 'D-Pad Move  |  ⬆ Jump  |  ⚔ Attack' : '← → Move  |  SPACE Jump  |  SHIFT Dash  |  M Mute', W / 2, H * 0.95);
+}
+
+// Title screen tap handler
+function handleTitleTap(cx, cy) {
+  if (!titleScreen) return;
+  const btnW = 180, btnH = 44, gap = 20;
+  const btnY2 = H * 0.8;
+  const normalX = W / 2 - btnW - gap / 2;
+  const unlimX = W / 2 + gap / 2;
+
+  if (cx >= normalX && cx <= normalX + btnW && cy >= btnY2 && cy <= btnY2 + btnH) {
+    unlimitedLives = false;
+    titleScreen = false;
+    state = 'metashop';
+    MetaShop.show();
+    playSound('powerup');
+  } else if (cx >= unlimX && cx <= unlimX + btnW && cy >= btnY2 && cy <= btnY2 + btnH) {
+    unlimitedLives = true;
+    titleScreen = false;
+    state = 'metashop';
+    MetaShop.show();
+    playSound('powerup');
+  }
 }
 
 // Start with title screen
 state = 'title';
 loop();
 
-// Handle title screen input
+// Handle title screen input (keyboard: 1 = normal, 2 = unlimited, Space/Enter = normal)
 window.addEventListener('keydown', function titleHandler(e) {
-  if (titleScreen && (e.code === 'Space' || e.code === 'Enter')) {
+  if (!titleScreen) return;
+  if (e.code === 'Digit1' || e.code === 'Space' || e.code === 'Enter') {
+    unlimitedLives = false;
     titleScreen = false;
     state = 'metashop';
     MetaShop.show();
+    playSound('powerup');
     e.preventDefault();
-  }
-  // toggle unlimited lives on title screen
-  if (titleScreen && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
-    unlimitedLives = !unlimitedLives;
-    playSound('coin');
+  } else if (e.code === 'Digit2') {
+    unlimitedLives = true;
+    titleScreen = false;
+    state = 'metashop';
+    MetaShop.show();
+    playSound('powerup');
     e.preventDefault();
   }
 });
@@ -6777,8 +6819,13 @@ window.addEventListener('keydown', function titleHandler(e) {
   tapStart.addEventListener('touchstart', e => {
     e.preventDefault();
     if (titleScreen) {
-      simKey('Space', true);
-      setTimeout(() => simKey('Space', false), 100);
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = W / rect.width;
+      const scaleY = H / rect.height;
+      const cx = (touch.clientX - rect.left) * scaleX;
+      const cy = (touch.clientY - rect.top) * scaleY;
+      handleTitleTap(cx, cy);
       return;
     }
     // MetaShop — tap items or START RUN directly
