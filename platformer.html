@@ -4923,7 +4923,7 @@ const MetaShop = (() => {
 })();
 
 // ============================================================
-// BOSS FIGHT SYSTEM
+// BOSS FIGHT SYSTEM (overhauled)
 // ============================================================
 const BossFight = (() => {
   let active = false;
@@ -4937,6 +4937,13 @@ const BossFight = (() => {
   let defeatTimer = 0;
   let displayHP = 0;
   let bossTimer = 0;
+  let arenaX = 0;
+  let arenaWidth = 1200;
+  let hpFlashTimer = 0;
+  let phaseTransTimer = 0;
+  let stalactiteWarnings = [];
+  let groundCracks = [];
+  let arenaDecor = [];
 
   function isActive() { return active; }
 
@@ -4945,21 +4952,48 @@ const BossFight = (() => {
     onComplete = callback;
     bossProjectiles = [];
     shockwaves = [];
+    stalactiteWarnings = [];
+    groundCracks = [];
     introTimer = 90;
     defeatTimer = 0;
     bossTimer = 0;
+    hpFlashTimer = 0;
+    phaseTransTimer = 0;
 
-    // arena setup — camera locks here
-    const arenaX = player.x + 200;
+    // wider arena setup
+    arenaX = player.x + 200;
+    arenaWidth = 1200;
     camera.x = arenaX;
 
-    // arena floor
+    // arena floor + 6 platforms for vertical gameplay
     arenaPlats = [
-      { x: arenaX, y: H - 40, w: W, h: 40 },
-      { x: arenaX + 100, y: H - 140, w: 100, h: 12 },
-      { x: arenaX + W - 200, y: H - 140, w: 100, h: 12 },
-      { x: arenaX + W/2 - 50, y: H - 220, w: 100, h: 12 },
+      { x: arenaX, y: H - 40, w: arenaWidth, h: 40 },
+      { x: arenaX + 80, y: H - 140, w: 120, h: 12 },
+      { x: arenaX + 320, y: H - 180, w: 100, h: 12 },
+      { x: arenaX + 550, y: H - 140, w: 120, h: 12 },
+      { x: arenaX + 780, y: H - 200, w: 100, h: 12 },
+      { x: arenaX + 1000, y: H - 150, w: 120, h: 12 },
+      { x: arenaX + 450, y: H - 280, w: 100, h: 12 },
     ];
+
+    // arena-specific decor
+    arenaDecor = [];
+    if (levelNum === 1) {
+      // torches on walls
+      for (let i = 0; i < 4; i++) {
+        arenaDecor.push({ type: 'torch', x: arenaX + i * 350 + 50, y: H - 120 });
+      }
+    } else if (levelNum === 2) {
+      // crystals
+      for (let i = 0; i < 6; i++) {
+        arenaDecor.push({ type: 'crystal', x: arenaX + i * 220 + 40, y: H - 55, h: 10 + Math.random() * 15, color: ['#8844cc','#44ccff','#cc44ff'][i % 3] });
+      }
+    } else {
+      // clouds for sky pirate
+      for (let i = 0; i < 5; i++) {
+        arenaDecor.push({ type: 'cloud', x: arenaX + i * 280 + 30, y: 30 + Math.random() * 60, w: 60 + Math.random() * 40 });
+      }
+    }
 
     // position player
     player.x = arenaX + 60;
@@ -4968,29 +5002,34 @@ const BossFight = (() => {
 
     if (levelNum === 1) {
       bossType = 'golem_king';
-      boss = { x: arenaX + W - 140, y: H - 40 - 80, w: 64, h: 80,
-               hp: 12, maxHp: 12, invTimer: 0,
+      boss = { x: arenaX + arenaWidth - 200, y: H - 40 - 80, w: 64, h: 80,
+               hp: 7, maxHp: 7, invTimer: 0,
                phase: 1, attackTimer: 120, attackState: 'idle',
-               slamTimer: 0, walkDir: -1, speed: 1.2 };
+               slamTimer: 0, walkDir: -1, speed: 1.2,
+               chargeDir: 0, chargeTimer: 0, stunTimer: 0, chargeWindup: 0,
+               mouthOpen: 0, armAngleL: 0, armAngleR: 0 };
     } else if (levelNum === 2) {
       bossType = 'cave_serpent';
-      boss = { x: arenaX + W/2, y: H - 200, w: 40, h: 40,
-               hp: 15, maxHp: 15, invTimer: 0,
+      boss = { x: arenaX + arenaWidth/2, y: H - 200, w: 40, h: 40,
+               hp: 9, maxHp: 9, invTimer: 0,
                segments: [], angle: 0, speed: 3,
                phase: 1, attackTimer: 100, attackState: 'idle',
-               burstX: 0, burstTimer: 0, diving: false };
-      // init segments
-      for (let i = 0; i < 6; i++) {
+               burstX: 0, burstTimer: 0, diving: false,
+               coilAngle: 0, coilRadius: 120, coilCenterX: 0, coilCenterY: 0,
+               tailWhipTimer: 0, jawOpen: 0 };
+      for (let i = 0; i < 8; i++) {
         boss.segments.push({ x: boss.x - i * 25, y: boss.y });
       }
     } else {
       bossType = 'sky_pirate';
-      boss = { x: arenaX + W/2 - 100, y: 80, w: 200, h: 50,
-               hp: 20, maxHp: 20, invTimer: 0,
+      boss = { x: arenaX + arenaWidth/2 - 100, y: 80, w: 200, h: 50,
+               hp: 12, maxHp: 12, invTimer: 0,
                phase: 1, attackTimer: 80, attackState: 'idle',
                shipDir: 1, shipSpeed: 1,
-               captainX: 0, captainY: 0, // relative to ship
-               anchorActive: false, anchorAngle: 0, anchorLen: 100 };
+               captainX: 0, captainY: 0,
+               anchorActive: false, anchorAngle: 0, anchorLen: 100,
+               tilt: 0, broadsideDir: 0, broadsideCount: 0,
+               bombRunX: 0, bombRunDir: 0, fireParticles: [] };
       boss.captainX = boss.w / 2;
       boss.captainY = -28;
     }
@@ -5004,7 +5043,25 @@ const BossFight = (() => {
     // intro
     if (introTimer > 0) {
       introTimer--;
-      // clear justPressed
+      Object.keys(justPressed).forEach(k => justPressed[k] = false);
+      return;
+    }
+
+    // phase transition pause
+    if (phaseTransTimer > 0) {
+      phaseTransTimer--;
+      if (phaseTransTimer === 35) {
+        triggerShake(12, 20);
+        spawnParticles(boss.x + boss.w/2, boss.y + boss.h/2, 30,
+          bossType === 'golem_king' ? '#ff4400' : bossType === 'cave_serpent' ? '#44ff88' : '#ff8844',
+          { spread: 10, life: 30, gravity: -0.05 });
+        playSound('boss_roar');
+        const roarTexts = { golem_king: 'RRRAAAGH!', cave_serpent: 'HSSSSSS!', sky_pirate: 'NO QUARTER!' };
+        spawnFloatingText(boss.x + boss.w/2, boss.y - 40, roarTexts[bossType] || 'ROAR!', '#ff0000');
+      }
+      if (phaseTransTimer === 0) {
+        boss.invTimer = 0;
+      }
       Object.keys(justPressed).forEach(k => justPressed[k] = false);
       return;
     }
@@ -5025,8 +5082,14 @@ const BossFight = (() => {
       return;
     }
 
-    // --- PLAYER PHYSICS (simplified, reusing globals) ---
-    // horizontal input
+    // --- CAMERA: follow player within arena ---
+    const targetCamX = player.x - W / 2 + player.w / 2;
+    const camMin = arenaX;
+    const camMax = arenaX + arenaWidth - W;
+    camera.x += (Math.max(camMin, Math.min(camMax, targetCamX)) - camera.x) * 0.12;
+    camera.x = Math.max(camMin, Math.min(camMax, camera.x));
+
+    // --- PLAYER PHYSICS ---
     const wantLeft = keys['ArrowLeft'] || keys['KeyA'];
     const wantRight = keys['ArrowRight'] || keys['KeyD'];
     if (player.wallJumpTimer > 0) player.wallJumpTimer--;
@@ -5043,7 +5106,7 @@ const BossFight = (() => {
       }
     }
 
-    // dash input
+    // dash
     if ((justPressed['ShiftLeft'] || justPressed['ShiftRight']) && player.hasDash && player.dashCooldown <= 0 && !player.dashing) {
       player.dashing = true; player.dashTimer = DASH_DURATION; player.dashCooldown = DASH_COOLDOWN;
       player.dashDir = player.facing; player.vy = 0;
@@ -5082,9 +5145,9 @@ const BossFight = (() => {
     player.x += player.vx;
     player.y += player.vy;
 
-    // clamp to arena
-    const arenaL = camera.x;
-    const arenaR = camera.x + W - player.w;
+    // clamp to arena bounds (not camera)
+    const arenaL = arenaX;
+    const arenaR = arenaX + arenaWidth - player.w;
     if (player.x < arenaL) player.x = arenaL;
     if (player.x > arenaR) player.x = arenaR;
 
@@ -5111,16 +5174,18 @@ const BossFight = (() => {
           playSound('boss_slam');
           spawnParticles(player.x + player.w/2, player.y + player.h, 20, '#ff6b35', { spread: 8, life: 20, gravity: 0.05 });
           player.targetScaleX = 1.6; player.targetScaleY = 0.5;
-          // ground pound deals 2 damage to boss
+          // ground pound deals 2 damage
           if (boss && boss.invTimer <= 0) {
             const dist = Math.abs((player.x + player.w/2) - (boss.x + boss.w/2));
             if (dist < 120) {
               boss.hp -= 2;
               boss.invTimer = 30;
+              hpFlashTimer = 15;
               triggerShake(6, 10);
               playSound('boss_hit');
               spawnFloatingText(boss.x + boss.w/2, boss.y - 20, 'QUAKE! -2', '#ff6b35');
               if (boss.hp <= 0) startDefeat();
+              else checkPhaseTransition();
             }
           }
         }
@@ -5147,10 +5212,10 @@ const BossFight = (() => {
         const earned = Math.floor(score / 100);
         Meta.addBananas(earned);
         Meta.recordRun(score);
-        showOverlay('GAME OVER', '#e94560', 'Score: ' + score + ' | +' + earned + ' 🍌', 'Shop', () => { state = 'metashop'; MetaShop.show(); });
+        showOverlay('GAME OVER', '#e94560', 'Score: ' + score + ' | +' + earned + ' \u{1F34C}', 'Shop', () => { state = 'metashop'; MetaShop.show(); });
         return;
       }
-      player.x = camera.x + 60; player.y = H - 80; player.vx = 0; player.vy = 0;
+      player.x = arenaX + 60; player.y = H - 80; player.vx = 0; player.vy = 0;
       player.groundPounding = false;
       playSound('hurt');
     }
@@ -5181,13 +5246,35 @@ const BossFight = (() => {
 
     // boss invulnerability timer
     if (boss.invTimer > 0) boss.invTimer--;
+    if (hpFlashTimer > 0) hpFlashTimer--;
 
-    // --- BOSS AI ---
-    if (bossType === 'golem_king') updateGolemKing();
-    else if (bossType === 'cave_serpent') updateCaveSerpent();
-    else if (bossType === 'sky_pirate') updateSkyPirate();
+    // stun timer (golem)
+    if (boss.stunTimer > 0) {
+      boss.stunTimer--;
+      // skip AI while stunned — vulnerability window
+    } else {
+      // --- BOSS AI ---
+      if (bossType === 'golem_king') updateGolemKing();
+      else if (bossType === 'cave_serpent') updateCaveSerpent();
+      else if (bossType === 'sky_pirate') updateSkyPirate();
+    }
 
-    // --- BOSS COLLISION (stomp check) ---
+    // update stalactite warnings
+    for (let i = stalactiteWarnings.length - 1; i >= 0; i--) {
+      const sw = stalactiteWarnings[i];
+      sw.timer--;
+      if (sw.timer === 0) {
+        // drop rock
+        bossProjectiles.push({
+          x: sw.x, y: 0, vx: 0, vy: 8, r: 10, gravity: 0.4, life: 120,
+          type: 'stalactite', angle: 0
+        });
+        playSound('break');
+        stalactiteWarnings.splice(i, 1);
+      }
+    }
+
+    // --- BOSS COLLISION (stomp = 2 damage) ---
     if (boss.invTimer <= 0 && !player.groundPounding) {
       const bHitbox = bossType === 'sky_pirate' ?
         { x: boss.x + boss.captainX - 14, y: boss.y + boss.captainY, w: 28, h: 28 } :
@@ -5196,22 +5283,17 @@ const BossFight = (() => {
       if (rectCollide(player, bHitbox)) {
         const stompCheck = player.vy > 0 && player.y + player.h - bHitbox.y < 18;
         if (stompCheck || player.dashing) {
-          boss.hp--;
+          boss.hp -= 2;
           boss.invTimer = 40;
+          hpFlashTimer = 15;
           player.vy = JUMP_FORCE * 0.7;
           playSound('boss_hit');
           triggerShake(5, 8);
           spawnParticles(bHitbox.x + bHitbox.w/2, bHitbox.y, 10, '#ff4444', { spread: 5, life: 15 });
-          spawnFloatingText(bHitbox.x + bHitbox.w/2, bHitbox.y - 15, '-1', '#ff4444');
+          spawnFloatingText(bHitbox.x + bHitbox.w/2, bHitbox.y - 15, '-2', '#ff4444');
           if (boss.hp <= 0) startDefeat();
-          else if (boss.hp <= boss.maxHp / 2 && boss.phase === 1) {
-            boss.phase = 2;
-            playSound('boss_roar');
-            triggerShake(10, 20);
-            spawnFloatingText(boss.x + boss.w/2, boss.y - 30, 'PHASE 2!', '#ff0000');
-          }
+          else checkPhaseTransition();
         } else if (player.invTimer <= 0) {
-          // player takes damage
           lives--;
           player.invTimer = 60;
           player.vy = JUMP_FORCE * 0.5;
@@ -5228,7 +5310,27 @@ const BossFight = (() => {
       p.x += p.vx;
       p.y += p.vy;
       if (p.gravity) p.vy += p.gravity;
+      if (p.angle !== undefined) p.angle += 0.15;
       p.life--;
+
+      // bomb explosion on ground contact
+      if (p.type === 'bomb' && p.y >= H - 45) {
+        // explode into shockwave
+        shockwaves.push({ x: p.x, y: H - 60, w: 40, h: 20, vx: -3, life: 30, originX: p.x });
+        shockwaves.push({ x: p.x, y: H - 60, w: 40, h: 20, vx: 3, life: 30, originX: p.x });
+        spawnParticles(p.x, H - 50, 12, '#ff6600', { spread: 6, life: 15, gravity: 0.1 });
+        playSound('break');
+        groundCracks.push({ x: p.x, life: 60 });
+        bossProjectiles.splice(i, 1); continue;
+      }
+
+      // stalactite ground hit
+      if (p.type === 'stalactite' && p.y >= H - 50) {
+        spawnParticles(p.x, H - 45, 8, '#8b7355', { spread: 5, life: 12, gravity: 0.1 });
+        triggerShake(3, 5);
+        groundCracks.push({ x: p.x, life: 40 });
+        bossProjectiles.splice(i, 1); continue;
+      }
 
       // deflect dash
       if (player.dashing && player.hasDeflect && rectCollide(player, { x: p.x - p.r, y: p.y - p.r, w: p.r * 2, h: p.r * 2 })) {
@@ -5246,7 +5348,7 @@ const BossFight = (() => {
         triggerShake(3, 6);
         bossProjectiles.splice(i, 1); continue;
       }
-      if (p.life <= 0 || p.y > H + 20 || p.x < camera.x - 50 || p.x > camera.x + W + 50) {
+      if (p.life <= 0 || p.y > H + 20 || p.x < arenaX - 50 || p.x > arenaX + arenaWidth + 50) {
         bossProjectiles.splice(i, 1);
       }
     }
@@ -5256,6 +5358,10 @@ const BossFight = (() => {
       const s = shockwaves[i];
       s.x += s.vx;
       s.life--;
+      // dust particles at wave front
+      if (s.life % 4 === 0) {
+        spawnParticles(s.x + (s.vx > 0 ? s.w : 0), s.y, 2, '#8b7355', { spread: 3, life: 8, gravity: -0.1 });
+      }
       if (rectCollide(player, { x: s.x, y: s.y, w: s.w, h: s.h }) && player.invTimer <= 0 && player.grounded) {
         lives--;
         player.invTimer = 60;
@@ -5266,7 +5372,13 @@ const BossFight = (() => {
       if (s.life <= 0) shockwaves.splice(i, 1);
     }
 
-    // banana gun hits boss
+    // ground cracks fade
+    for (let i = groundCracks.length - 1; i >= 0; i--) {
+      groundCracks[i].life--;
+      if (groundCracks[i].life <= 0) groundCracks.splice(i, 1);
+    }
+
+    // banana gun hits boss (1 damage)
     for (let i = BANANA_BULLETS.length - 1; i >= 0; i--) {
       const b = BANANA_BULLETS[i];
       const bHit = bossType === 'sky_pirate' ?
@@ -5275,16 +5387,25 @@ const BossFight = (() => {
       if (b.x > bHit.x - 10 && b.x < bHit.x + bHit.w + 10 && b.y > bHit.y - 10 && b.y < bHit.y + bHit.h + 10) {
         boss.hp--;
         boss.invTimer = 15;
+        hpFlashTimer = 15;
         playSound('boss_hit');
         spawnParticles(b.x, b.y, 6, '#ffd700', { spread: 4, life: 12 });
         spawnFloatingText(b.x, b.y - 10, '-1', '#ffd700');
         b.life = 0;
         if (boss.hp <= 0) startDefeat();
-        else if (boss.hp <= boss.maxHp / 2 && boss.phase === 1) {
-          boss.phase = 2;
-          playSound('boss_roar');
-          triggerShake(10, 20);
-        }
+        else checkPhaseTransition();
+      }
+    }
+
+    // sky pirate fire particles (phase 2)
+    if (bossType === 'sky_pirate' && boss.phase === 2) {
+      if (bossTimer % 8 === 0) {
+        boss.fireParticles.push({ x: boss.x + Math.random() * boss.w, y: boss.y + Math.random() * boss.h * 0.5, life: 20 });
+      }
+      for (let i = boss.fireParticles.length - 1; i >= 0; i--) {
+        boss.fireParticles[i].y -= 0.8;
+        boss.fireParticles[i].life--;
+        if (boss.fireParticles[i].life <= 0) boss.fireParticles.splice(i, 1);
       }
     }
 
@@ -5294,8 +5415,16 @@ const BossFight = (() => {
     // HP lerp
     displayHP += (boss.hp - displayHP) * 0.1;
 
-    // clear justPressed
     Object.keys(justPressed).forEach(k => justPressed[k] = false);
+  }
+
+  function checkPhaseTransition() {
+    if (boss.hp <= boss.maxHp / 2 && boss.phase === 1) {
+      boss.phase = 2;
+      boss.invTimer = 30;
+      phaseTransTimer = 45;
+      spawnFloatingText(boss.x + boss.w/2, boss.y - 30, 'PHASE 2!', '#ff0000');
+    }
   }
 
   function startDefeat() {
@@ -5311,32 +5440,44 @@ const BossFight = (() => {
   // --- GOLEM KING AI ---
   function updateGolemKing() {
     boss.attackTimer--;
-    const cycle = boss.phase === 1 ? 180 : 120;
+    const cycle = boss.phase === 1 ? 160 : 100;
 
     if (boss.attackState === 'idle' && boss.attackTimer <= 0) {
-      const attacks = ['slam', 'rocks', 'walk'];
+      const attacks = boss.phase === 1
+        ? ['slam', 'rocks', 'walk', 'charge', 'stalactites']
+        : ['slam', 'rocks', 'charge', 'stalactites', 'walk', 'charge'];
       boss.attackState = attacks[Math.floor(Math.random() * attacks.length)];
       boss.attackTimer = cycle;
       boss.slamTimer = 0;
+      boss.chargeWindup = 0;
+      boss.chargeTimer = 0;
+      // pre-attack glow
+      boss.preAttackGlow = 10;
     }
+
+    // pre-attack flash
+    if (boss.preAttackGlow > 0) boss.preAttackGlow--;
 
     if (boss.attackState === 'slam') {
       boss.slamTimer++;
+      boss.mouthOpen = boss.slamTimer < 40 ? Math.min(1, boss.slamTimer / 30) : Math.max(0, 1 - (boss.slamTimer - 40) / 10);
+      // raise arms
+      boss.armAngleL = boss.slamTimer < 40 ? Math.min(1, boss.slamTimer / 30) : 0;
+      boss.armAngleR = boss.armAngleL;
       if (boss.slamTimer === 40) {
-        // SLAM — create shockwaves
         playSound('boss_slam');
         triggerShake(8, 12);
         const cx = boss.x + boss.w/2;
         const gy = H - 40 - 20;
-        shockwaves.push({ x: cx, y: gy, w: 30, h: 20, vx: -4, life: 50 });
-        shockwaves.push({ x: cx, y: gy, w: 30, h: 20, vx: 4, life: 50 });
+        shockwaves.push({ x: cx, y: gy, w: 30, h: 20, vx: -4, life: 50, originX: cx });
+        shockwaves.push({ x: cx, y: gy, w: 30, h: 20, vx: 4, life: 50, originX: cx });
         if (boss.phase === 2) {
-          shockwaves.push({ x: cx, y: gy, w: 30, h: 20, vx: -6, life: 40 });
-          shockwaves.push({ x: cx, y: gy, w: 30, h: 20, vx: 6, life: 40 });
+          shockwaves.push({ x: cx, y: gy, w: 30, h: 20, vx: -6, life: 40, originX: cx });
+          shockwaves.push({ x: cx, y: gy, w: 30, h: 20, vx: 6, life: 40, originX: cx });
         }
         spawnParticles(cx, gy + 10, 15, '#8b7355', { spread: 8, life: 20, gravity: 0.1 });
       }
-      if (boss.slamTimer > 60) boss.attackState = 'idle';
+      if (boss.slamTimer > 60) { boss.attackState = 'idle'; boss.mouthOpen = 0; boss.armAngleL = 0; boss.armAngleR = 0; }
     }
 
     if (boss.attackState === 'rocks') {
@@ -5350,7 +5491,7 @@ const BossFight = (() => {
             x: boss.x + boss.w/2, y: boss.y + 10,
             vx: Math.cos(angle) * spd * (player.x < boss.x ? -1 : 1),
             vy: Math.sin(angle) * spd - 3,
-            r: 8, gravity: 0.3, life: 120
+            r: 8, gravity: 0.3, life: 120, type: 'rock', angle: 0
           });
         }
         playSound('boss_roar');
@@ -5361,11 +5502,78 @@ const BossFight = (() => {
     if (boss.attackState === 'walk') {
       const dir = player.x < boss.x ? -1 : 1;
       boss.x += dir * boss.speed * (boss.phase === 2 ? 1.5 : 1);
-      boss.x = Math.max(camera.x + 10, Math.min(camera.x + W - boss.w - 10, boss.x));
+      boss.x = Math.max(arenaX + 10, Math.min(arenaX + arenaWidth - boss.w - 10, boss.x));
       boss.slamTimer++;
       if (boss.slamTimer > 80) boss.attackState = 'idle';
-      // mini shake
       if (boss.slamTimer % 10 === 0) triggerShake(2, 3);
+    }
+
+    // NEW: charge attack
+    if (boss.attackState === 'charge') {
+      boss.slamTimer++;
+      if (boss.slamTimer <= 30) {
+        // windup: flash red, show "!", rumble
+        boss.chargeWindup = boss.slamTimer;
+        boss.chargeDir = player.x < boss.x ? -1 : 1;
+        if (boss.slamTimer % 5 === 0) triggerShake(2, 4);
+      } else if (boss.slamTimer <= 70) {
+        // charging
+        boss.chargeTimer = boss.slamTimer - 30;
+        boss.x += boss.chargeDir * 8;
+        // dust particles while charging
+        if (boss.slamTimer % 3 === 0) {
+          spawnParticles(boss.x + boss.w/2, boss.y + boss.h, 3, '#8b7355', { spread: 4, life: 10, gravity: 0.1 });
+        }
+        // wall collision => stun
+        if (boss.x <= arenaX + 5) {
+          boss.x = arenaX + 5;
+          boss.stunTimer = 60;
+          boss.attackState = 'idle';
+          boss.chargeWindup = 0;
+          boss.chargeTimer = 0;
+          triggerShake(10, 15);
+          playSound('boss_slam');
+          spawnFloatingText(boss.x + boss.w/2, boss.y - 20, 'STUNNED!', '#ffff00');
+          spawnParticles(boss.x, boss.y + boss.h/2, 15, '#8b7355', { spread: 8, life: 20, gravity: 0.1 });
+        } else if (boss.x + boss.w >= arenaX + arenaWidth - 5) {
+          boss.x = arenaX + arenaWidth - boss.w - 5;
+          boss.stunTimer = 60;
+          boss.attackState = 'idle';
+          boss.chargeWindup = 0;
+          boss.chargeTimer = 0;
+          triggerShake(10, 15);
+          playSound('boss_slam');
+          spawnFloatingText(boss.x + boss.w/2, boss.y - 20, 'STUNNED!', '#ffff00');
+          spawnParticles(boss.x + boss.w, boss.y + boss.h/2, 15, '#8b7355', { spread: 8, life: 20, gravity: 0.1 });
+        }
+        // charge hitbox vs player
+        if (rectCollide(player, { x: boss.x, y: boss.y, w: boss.w, h: boss.h }) && player.invTimer <= 0 && !player.dashing) {
+          lives--;
+          player.invTimer = 60;
+          player.vy = JUMP_FORCE * 0.6;
+          player.vx = boss.chargeDir * 8;
+          playSound('hurt');
+          triggerShake(5, 8);
+        }
+      } else {
+        boss.attackState = 'idle';
+        boss.chargeWindup = 0;
+        boss.chargeTimer = 0;
+      }
+    }
+
+    // NEW: stalactites attack
+    if (boss.attackState === 'stalactites') {
+      boss.slamTimer++;
+      if (boss.slamTimer === 10) {
+        const count = boss.phase === 1 ? 3 : 5;
+        for (let i = 0; i < count; i++) {
+          const wx = arenaX + 80 + Math.random() * (arenaWidth - 160);
+          stalactiteWarnings.push({ x: wx, timer: 40 });
+        }
+        playSound('boss_roar');
+      }
+      if (boss.slamTimer > 60) boss.attackState = 'idle';
     }
   }
 
@@ -5374,14 +5582,13 @@ const BossFight = (() => {
     boss.attackTimer--;
     boss.angle += 0.03;
 
-    // move head in a wave pattern
-    if (!boss.diving) {
+    if (!boss.diving && boss.attackState !== 'coil' && boss.attackState !== 'tailwhip') {
       boss.x += Math.cos(boss.angle) * boss.speed;
       boss.y = H - 200 + Math.sin(boss.angle * 1.5) * 80;
-      boss.x = Math.max(camera.x + 30, Math.min(camera.x + W - 60, boss.x));
+      boss.x = Math.max(arenaX + 30, Math.min(arenaX + arenaWidth - 60, boss.x));
     }
 
-    // trail segments behind head
+    // trail segments
     for (let i = 0; i < boss.segments.length; i++) {
       const target = i === 0 ? boss : boss.segments[i - 1];
       const dx = target.x - boss.segments[i].x;
@@ -5391,10 +5598,13 @@ const BossFight = (() => {
     }
 
     if (boss.attackState === 'idle' && boss.attackTimer <= 0) {
-      const attacks = ['burst', 'spit', 'burst'];
+      const attacks = boss.phase === 1
+        ? ['burst', 'spit', 'burst', 'coil']
+        : ['burst', 'spit', 'coil', 'tailwhip', 'burst', 'coil'];
       boss.attackState = attacks[Math.floor(Math.random() * attacks.length)];
-      boss.attackTimer = boss.phase === 1 ? 150 : 100;
+      boss.attackTimer = boss.phase === 1 ? 140 : 90;
       boss.slamTimer = 0;
+      boss.preAttackGlow = 10;
     }
 
     if (boss.attackState === 'burst') {
@@ -5407,15 +5617,14 @@ const BossFight = (() => {
       if (boss.diving) {
         boss.burstTimer++;
         if (boss.burstTimer < 30) {
-          boss.y += 8; // dive down
+          boss.y += 8;
         } else if (boss.burstTimer === 50) {
-          // burst up
           boss.x = boss.burstX;
           boss.y = H - 40;
           playSound('boss_slam');
           triggerShake(8, 12);
         } else if (boss.burstTimer > 50 && boss.burstTimer < 70) {
-          boss.y -= 12; // shoot upward
+          boss.y -= 12;
         } else if (boss.burstTimer >= 70) {
           boss.diving = false;
           boss.attackState = 'idle';
@@ -5425,6 +5634,7 @@ const BossFight = (() => {
 
     if (boss.attackState === 'spit') {
       boss.slamTimer++;
+      boss.jawOpen = boss.slamTimer < 25 ? boss.slamTimer / 25 : Math.max(0, 1 - (boss.slamTimer - 25) / 10);
       if (boss.slamTimer === 25) {
         const count = boss.phase === 1 ? 3 : 5;
         for (let i = 0; i < count; i++) {
@@ -5434,12 +5644,63 @@ const BossFight = (() => {
             x: boss.x + boss.w/2, y: boss.y + boss.h/2,
             vx: dir * (4 + Math.random()) + Math.sin(spread) * 2,
             vy: -2 + spread * 2,
-            r: 6, gravity: 0.15, life: 100
+            r: 6, gravity: 0.15, life: 100, type: 'acid', angle: 0
           });
         }
         playSound('boss_roar');
       }
-      if (boss.slamTimer > 40) boss.attackState = 'idle';
+      if (boss.slamTimer > 40) { boss.attackState = 'idle'; boss.jawOpen = 0; }
+    }
+
+    // NEW: coil attack
+    if (boss.attackState === 'coil') {
+      boss.slamTimer++;
+      if (boss.slamTimer === 1) {
+        boss.coilCenterX = player.x;
+        boss.coilCenterY = H - 160;
+        boss.coilAngle = 0;
+        boss.coilRadius = 120;
+      }
+      if (boss.slamTimer <= 90) {
+        boss.coilAngle += 0.12;
+        boss.coilRadius = 120 - (boss.slamTimer / 90) * 80;
+        boss.x = boss.coilCenterX + Math.cos(boss.coilAngle) * boss.coilRadius;
+        boss.y = boss.coilCenterY + Math.sin(boss.coilAngle) * boss.coilRadius;
+      } else if (boss.slamTimer === 91) {
+        // explode outward: 8 radial projectiles
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2;
+          bossProjectiles.push({
+            x: boss.x + boss.w/2, y: boss.y + boss.h/2,
+            vx: Math.cos(a) * 5, vy: Math.sin(a) * 5,
+            r: 7, gravity: 0, life: 80, type: 'acid', angle: 0
+          });
+        }
+        playSound('boss_slam');
+        triggerShake(6, 10);
+        spawnParticles(boss.x + boss.w/2, boss.y + boss.h/2, 20, '#44ff88', { spread: 10, life: 20, gravity: 0 });
+      }
+      if (boss.slamTimer > 100) boss.attackState = 'idle';
+    }
+
+    // NEW: tailwhip attack
+    if (boss.attackState === 'tailwhip') {
+      boss.slamTimer++;
+      boss.tailWhipTimer = boss.slamTimer;
+      if (boss.slamTimer >= 20 && boss.slamTimer <= 40) {
+        // tail segments sweep across ground level
+        const progress = (boss.slamTimer - 20) / 20;
+        const sweepX = arenaX + progress * arenaWidth;
+        // check player collision with sweep zone
+        if (player.grounded && Math.abs(player.x - sweepX) < 60 && player.invTimer <= 0) {
+          lives--;
+          player.invTimer = 60;
+          player.vy = JUMP_FORCE * 0.7;
+          playSound('hurt');
+          triggerShake(4, 8);
+        }
+      }
+      if (boss.slamTimer > 50) { boss.attackState = 'idle'; boss.tailWhipTimer = 0; }
     }
   }
 
@@ -5447,10 +5708,17 @@ const BossFight = (() => {
   function updateSkyPirate() {
     boss.attackTimer--;
 
-    // ship movement
-    boss.x += boss.shipDir * boss.shipSpeed * (boss.phase === 2 ? 1.5 : 1);
-    if (boss.x < camera.x + 20) { boss.x = camera.x + 20; boss.shipDir = 1; }
-    if (boss.x + boss.w > camera.x + W - 20) { boss.x = camera.x + W - 20 - boss.w; boss.shipDir = -1; }
+    // ship movement (use arena bounds not camera)
+    if (boss.attackState !== 'broadside') {
+      const spdMult = boss.attackState === 'bombing_run' ? 3 : 1;
+      boss.x += boss.shipDir * boss.shipSpeed * (boss.phase === 2 ? 1.5 : 1) * spdMult;
+    }
+    if (boss.x < arenaX + 20) { boss.x = arenaX + 20; boss.shipDir = 1; }
+    if (boss.x + boss.w > arenaX + arenaWidth - 20) { boss.x = arenaX + arenaWidth - 20 - boss.w; boss.shipDir = -1; }
+
+    // tilt lerp
+    const targetTilt = boss.attackState === 'broadside' ? (boss.broadsideDir * 0.15) : 0;
+    boss.tilt += (targetTilt - boss.tilt) * 0.1;
 
     // anchor swing
     if (boss.anchorActive) {
@@ -5459,10 +5727,14 @@ const BossFight = (() => {
     }
 
     if (boss.attackState === 'idle' && boss.attackTimer <= 0) {
-      const attacks = ['barrels', 'cannon', 'anchor'];
+      const attacks = boss.phase === 1
+        ? ['barrels', 'cannon', 'anchor', 'broadside']
+        : ['barrels', 'cannon', 'broadside', 'bombing_run', 'anchor', 'broadside'];
       boss.attackState = attacks[Math.floor(Math.random() * attacks.length)];
       boss.attackTimer = boss.phase === 1 ? 100 : 70;
       boss.slamTimer = 0;
+      boss.broadsideCount = 0;
+      boss.preAttackGlow = 10;
     }
 
     if (boss.attackState === 'barrels') {
@@ -5474,7 +5746,7 @@ const BossFight = (() => {
         bossProjectiles.push({
           x: bx, y: boss.y + boss.h,
           vx: (Math.random() - 0.5) * 2, vy: 1,
-          r: 10, gravity: 0.35, life: 150
+          r: 10, gravity: 0.35, life: 150, type: 'barrel', angle: 0
         });
         playSound('break');
       }
@@ -5487,7 +5759,7 @@ const BossFight = (() => {
         const dir = player.x < boss.x + boss.w/2 ? -1 : 1;
         bossProjectiles.push({
           x: boss.x + (dir > 0 ? boss.w : 0), y: boss.y + boss.h/2,
-          vx: dir * 8, vy: 0, r: 10, gravity: 0, life: 80
+          vx: dir * 8, vy: 0, r: 10, gravity: 0, life: 80, type: 'cannonball', angle: 0
         });
         playSound('boss_slam');
         triggerShake(4, 6);
@@ -5502,7 +5774,6 @@ const BossFight = (() => {
         boss.anchorAngle = -1.5;
         playSound('boss_roar');
       }
-      // anchor hitbox
       if (boss.anchorActive) {
         const ax = boss.x + boss.w/2 + Math.sin(boss.anchorAngle) * boss.anchorLen;
         const ay = boss.y + boss.h + Math.cos(boss.anchorAngle) * boss.anchorLen;
@@ -5516,80 +5787,382 @@ const BossFight = (() => {
       }
       if (boss.slamTimer > 80) { boss.attackState = 'idle'; boss.anchorActive = false; }
     }
+
+    // NEW: broadside attack
+    if (boss.attackState === 'broadside') {
+      boss.slamTimer++;
+      if (boss.slamTimer === 1) {
+        boss.broadsideDir = player.x < boss.x + boss.w/2 ? -1 : 1;
+        boss.broadsideCount = 0;
+      }
+      // ship stops for 20 frames, then fires 5 cannonballs every 8 frames
+      if (boss.slamTimer > 20 && (boss.slamTimer - 20) % 8 === 0 && boss.broadsideCount < 5) {
+        const spread = (boss.broadsideCount - 2) * 0.2;
+        bossProjectiles.push({
+          x: boss.x + (boss.broadsideDir > 0 ? boss.w + 10 : -10),
+          y: boss.y + boss.h/2 + boss.broadsideCount * 4,
+          vx: boss.broadsideDir * 6,
+          vy: 2 + spread * 2,
+          r: 8, gravity: 0.15, life: 100, type: 'cannonball', angle: 0
+        });
+        boss.broadsideCount++;
+        playSound('boss_slam');
+        triggerShake(3, 5);
+      }
+      if (boss.slamTimer > 70) boss.attackState = 'idle';
+    }
+
+    // NEW: bombing run
+    if (boss.attackState === 'bombing_run') {
+      boss.slamTimer++;
+      if (boss.slamTimer === 1) {
+        boss.bombRunDir = boss.shipDir;
+        boss.bombRunX = boss.x;
+      }
+      // drop bombs every 20px of travel
+      const traveled = Math.abs(boss.x - boss.bombRunX);
+      if (traveled > 20) {
+        bossProjectiles.push({
+          x: boss.x + boss.w/2, y: boss.y + boss.h,
+          vx: 0, vy: 2, r: 8, gravity: 0.3, life: 120, type: 'bomb', angle: 0
+        });
+        boss.bombRunX = boss.x;
+        playSound('break');
+      }
+      if (boss.slamTimer > 80) boss.attackState = 'idle';
+    }
   }
 
+  // ======================== DRAW ========================
   function draw(c) {
-    // draw bg based on current theme
     drawBg();
 
-    // arena platforms
+    // vignette effect
+    const vigGrad = c.createRadialGradient(W/2, H/2, H * 0.4, W/2, H/2, H * 0.9);
+    vigGrad.addColorStop(0, 'rgba(0,0,0,0)');
+    vigGrad.addColorStop(1, 'rgba(0,0,0,0.35)');
+    c.fillStyle = vigGrad;
+    c.fillRect(0, 0, W, H);
+
+    // arena decor (behind platforms)
+    for (const d of arenaDecor) {
+      const dx = d.x - camera.x;
+      if (dx < -80 || dx > W + 80) continue;
+      if (d.type === 'torch') {
+        c.fillStyle = '#5a3520';
+        c.fillRect(dx - 2, d.y, 4, 30);
+        // flame
+        const flicker = Math.sin(bossTimer * 0.2 + d.x) * 3;
+        c.fillStyle = '#ff6600';
+        c.beginPath();
+        c.ellipse(dx, d.y - 4 + flicker, 6, 10, 0, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = '#ffcc00';
+        c.beginPath();
+        c.ellipse(dx, d.y - 2 + flicker, 3, 6, 0, 0, Math.PI * 2);
+        c.fill();
+      } else if (d.type === 'crystal') {
+        c.fillStyle = d.color;
+        c.globalAlpha = 0.6 + Math.sin(bossTimer * 0.05 + d.x) * 0.2;
+        c.beginPath();
+        c.moveTo(dx, d.y);
+        c.lineTo(dx - 5, d.y + d.h);
+        c.lineTo(dx + 5, d.y + d.h);
+        c.closePath();
+        c.fill();
+        c.globalAlpha = 1;
+      } else if (d.type === 'cloud') {
+        c.fillStyle = 'rgba(255,255,255,0.15)';
+        const cx = dx + Math.sin(bossTimer * 0.005 + d.x * 0.01) * 20;
+        c.beginPath();
+        c.ellipse(cx, d.y, d.w/2, 15, 0, 0, Math.PI * 2);
+        c.fill();
+        c.beginPath();
+        c.ellipse(cx - d.w * 0.25, d.y + 5, d.w * 0.3, 12, 0, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+
+    // arena platforms with stone brick pattern
     const theme = level.theme;
     for (const p of arenaPlats) {
       const sx = p.x - camera.x;
+      if (sx + p.w < -10 || sx > W + 10) continue;
       c.fillStyle = theme.dirt;
       c.fillRect(sx, p.y, p.w, p.h);
+      // brick pattern for floor
+      if (p.h >= 30) {
+        c.strokeStyle = 'rgba(0,0,0,0.15)';
+        c.lineWidth = 1;
+        for (let row = 0; row < p.h; row += 10) {
+          const offset = (row / 10) % 2 === 0 ? 0 : 15;
+          for (let col = offset; col < p.w; col += 30) {
+            c.strokeRect(sx + col, p.y + row, 30, 10);
+          }
+        }
+      }
+      // platform chains/pillars for floating platforms
+      if (p.h < 30 && p.y < H - 50) {
+        c.strokeStyle = 'rgba(150,150,150,0.3)';
+        c.lineWidth = 2;
+        c.setLineDash([4, 4]);
+        c.beginPath();
+        c.moveTo(sx + 10, p.y + p.h);
+        c.lineTo(sx + 10, p.y + p.h + 40);
+        c.moveTo(sx + p.w - 10, p.y + p.h);
+        c.lineTo(sx + p.w - 10, p.y + p.h + 40);
+        c.stroke();
+        c.setLineDash([]);
+      }
       c.fillStyle = theme.grass;
       c.fillRect(sx, p.y, p.w, 4);
     }
 
-    // draw shockwaves
+    // ground cracks
+    for (const gc of groundCracks) {
+      const gx = gc.x - camera.x;
+      const alpha = gc.life / 60;
+      c.strokeStyle = `rgba(80,60,40,${alpha})`;
+      c.lineWidth = 2;
+      c.beginPath();
+      c.moveTo(gx - 15, H - 40);
+      c.lineTo(gx - 5, H - 30);
+      c.lineTo(gx + 3, H - 38);
+      c.lineTo(gx + 12, H - 28);
+      c.stroke();
+    }
+
+    // stalactite warning markers
+    for (const sw of stalactiteWarnings) {
+      const wx = sw.x - camera.x;
+      const pulse = Math.sin(sw.timer * 0.3) * 0.3 + 0.5;
+      c.strokeStyle = `rgba(255,0,0,${pulse})`;
+      c.lineWidth = 3;
+      // red X mark
+      c.beginPath();
+      c.moveTo(wx - 12, H - 50); c.lineTo(wx + 12, H - 36);
+      c.moveTo(wx + 12, H - 50); c.lineTo(wx - 12, H - 36);
+      c.stroke();
+      // vertical line from ceiling
+      c.strokeStyle = `rgba(255,100,100,${pulse * 0.3})`;
+      c.lineWidth = 1;
+      c.setLineDash([4, 8]);
+      c.beginPath();
+      c.moveTo(wx, 0);
+      c.lineTo(wx, H - 50);
+      c.stroke();
+      c.setLineDash([]);
+    }
+
+    // draw shockwaves (improved: semi-circular expanding waves)
     for (const s of shockwaves) {
       const sx = s.x - camera.x;
       const alpha = s.life / 50;
-      c.fillStyle = `rgba(255,107,53,${alpha * 0.6})`;
-      c.fillRect(sx, s.y, s.w, s.h);
-      c.fillStyle = `rgba(255,200,50,${alpha * 0.3})`;
-      c.fillRect(sx, s.y - 4, s.w, 4);
+      const radius = (50 - s.life) * 1.5;
+      // semi-circular wave
+      c.save();
+      c.translate(sx + s.w/2, s.y + 10);
+      const waveGrad = c.createRadialGradient(0, 0, 0, 0, 0, radius);
+      waveGrad.addColorStop(0, `rgba(255,107,53,0)`);
+      waveGrad.addColorStop(0.6, `rgba(255,107,53,${alpha * 0.4})`);
+      waveGrad.addColorStop(1, `rgba(255,200,50,${alpha * 0.6})`);
+      c.fillStyle = waveGrad;
+      c.beginPath();
+      if (s.vx > 0) {
+        c.arc(0, 0, radius, -Math.PI/2, Math.PI/2);
+      } else {
+        c.arc(0, 0, radius, Math.PI/2, -Math.PI/2);
+      }
+      c.closePath();
+      c.fill();
+      c.restore();
     }
 
     // draw boss
-    if (defeatTimer > 0 && defeatTimer % 4 < 2) { /* flash */ }
+    if (defeatTimer > 0 && defeatTimer % 4 < 2) { /* flash out */ }
     else if (bossType === 'golem_king') drawGolemKing(c);
     else if (bossType === 'cave_serpent') drawCaveSerpent(c);
     else if (bossType === 'sky_pirate') drawSkyPirate(c);
 
-    // draw projectiles
+    // draw projectiles (improved per type)
     for (const p of bossProjectiles) {
       const sx = p.x - camera.x;
-      c.fillStyle = bossType === 'cave_serpent' ? '#44ff44' : '#8b5e3c';
+      c.save();
+      c.translate(sx, p.y);
+      if (p.angle !== undefined) c.rotate(p.angle);
+
+      if (p.type === 'rock' || p.type === 'stalactite') {
+        // irregular polygon rock
+        c.fillStyle = '#7a6a5a';
+        c.beginPath();
+        c.moveTo(-p.r, -p.r * 0.5);
+        c.lineTo(-p.r * 0.3, -p.r);
+        c.lineTo(p.r * 0.6, -p.r * 0.7);
+        c.lineTo(p.r, p.r * 0.2);
+        c.lineTo(p.r * 0.4, p.r);
+        c.lineTo(-p.r * 0.5, p.r * 0.6);
+        c.closePath();
+        c.fill();
+        c.strokeStyle = '#5a4a3a';
+        c.lineWidth = 1;
+        c.stroke();
+      } else if (p.type === 'acid') {
+        // green glowing blob
+        c.fillStyle = 'rgba(68,255,68,0.4)';
+        c.beginPath();
+        c.arc(0, 0, p.r + 4, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = '#44ff44';
+        c.beginPath();
+        c.arc(0, 0, p.r, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = '#88ff88';
+        c.beginPath();
+        c.arc(-1, -2, p.r * 0.4, 0, Math.PI * 2);
+        c.fill();
+        // drip trail
+        c.fillStyle = 'rgba(68,255,68,0.3)';
+        c.beginPath();
+        c.arc(0, p.r + 3, 2, 0, Math.PI * 2);
+        c.fill();
+      } else if (p.type === 'barrel') {
+        // barrel shape
+        c.fillStyle = '#8b5e3c';
+        c.fillRect(-p.r, -p.r * 0.7, p.r * 2, p.r * 1.4);
+        // bands
+        c.strokeStyle = '#5a3520';
+        c.lineWidth = 2;
+        c.beginPath();
+        c.moveTo(-p.r, -p.r * 0.3); c.lineTo(p.r, -p.r * 0.3);
+        c.moveTo(-p.r, p.r * 0.3); c.lineTo(p.r, p.r * 0.3);
+        c.stroke();
+      } else if (p.type === 'cannonball') {
+        // dark sphere with smoke trail
+        c.fillStyle = 'rgba(100,100,100,0.3)';
+        c.beginPath();
+        c.arc(p.vx > 0 ? -8 : 8, 0, p.r * 0.6, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = '#222';
+        c.beginPath();
+        c.arc(0, 0, p.r, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = '#444';
+        c.beginPath();
+        c.arc(-2, -3, p.r * 0.3, 0, Math.PI * 2);
+        c.fill();
+      } else if (p.type === 'bomb') {
+        // round bomb with fuse
+        c.fillStyle = '#333';
+        c.beginPath();
+        c.arc(0, 0, p.r, 0, Math.PI * 2);
+        c.fill();
+        c.strokeStyle = '#888';
+        c.lineWidth = 1.5;
+        c.beginPath();
+        c.moveTo(0, -p.r);
+        c.lineTo(3, -p.r - 6);
+        c.stroke();
+        // fuse spark
+        c.fillStyle = '#ff8800';
+        c.beginPath();
+        c.arc(3, -p.r - 6, 2 + Math.sin(bossTimer * 0.5), 0, Math.PI * 2);
+        c.fill();
+      } else {
+        // fallback circle
+        c.fillStyle = bossType === 'cave_serpent' ? '#44ff44' : '#8b5e3c';
+        c.beginPath();
+        c.arc(0, 0, p.r, 0, Math.PI * 2);
+        c.fill();
+      }
+      c.restore();
+    }
+
+    // draw player
+    drawPlayer();
+    drawBananaBullets();
+
+    // --- IMPROVED HP BAR (top of screen, segmented) ---
+    const barW = 400;
+    const barH = 18;
+    const barX = W/2 - barW/2;
+    const barY = 20;
+    const segCount = boss.maxHp;
+    const segW = barW / segCount;
+
+    // background
+    c.fillStyle = '#0008';
+    c.fillRect(barX - 3, barY - 3, barW + 6, barH + 6);
+    c.fillStyle = '#1a1a1a';
+    c.fillRect(barX, barY, barW, barH);
+
+    // HP flash
+    if (hpFlashTimer > 0) {
+      c.fillStyle = `rgba(255,255,255,${hpFlashTimer / 15 * 0.5})`;
+      c.fillRect(barX, barY, barW, barH);
+    }
+
+    // segments
+    for (let i = 0; i < segCount; i++) {
+      const segFill = Math.max(0, Math.min(1, displayHP - i));
+      if (segFill <= 0) continue;
+      const hpRatio = (i + 1) / segCount;
+      const hpColor = hpRatio > 0.5 ? '#e74c3c' : hpRatio > 0.25 ? '#e67e22' : '#c0392b';
+      c.fillStyle = hpColor;
+      c.fillRect(barX + i * segW + 1, barY + 1, (segW - 2) * segFill, barH - 2);
+    }
+
+    // segment dividers
+    c.strokeStyle = '#333';
+    c.lineWidth = 1;
+    for (let i = 1; i < segCount; i++) {
       c.beginPath();
-      c.arc(sx, p.y, p.r, 0, Math.PI * 2);
-      c.fill();
-      c.strokeStyle = '#0004';
-      c.lineWidth = 1;
+      c.moveTo(barX + i * segW, barY);
+      c.lineTo(barX + i * segW, barY + barH);
       c.stroke();
     }
 
-    // draw player (reuse global drawPlayer)
-    drawPlayer();
-
-    // draw banana bullets
-    drawBananaBullets();
-
-    // particles & floating texts drawn by main loop
-
-    // boss HP bar
-    const barW = 400;
-    const barH = 14;
-    const barX = W/2 - barW/2;
-    const barY = H - 30;
-    c.fillStyle = '#0008';
-    c.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
-    c.fillStyle = '#333';
-    c.fillRect(barX, barY, barW, barH);
-    const hpRatio = Math.max(0, displayHP) / boss.maxHp;
-    const hpColor = hpRatio > 0.5 ? '#e74c3c' : hpRatio > 0.25 ? '#e67e22' : '#c0392b';
-    c.fillStyle = hpColor;
-    c.fillRect(barX, barY, barW * hpRatio, barH);
-    c.strokeStyle = '#fff4';
+    // border glow
+    c.strokeStyle = '#fff3';
     c.lineWidth = 1;
     c.strokeRect(barX, barY, barW, barH);
+
+    // boss portrait icon
+    const iconX = barX - 30;
+    const iconY = barY + barH / 2;
+    c.fillStyle = '#0008';
+    c.beginPath();
+    c.arc(iconX, iconY, 14, 0, Math.PI * 2);
+    c.fill();
+    if (bossType === 'golem_king') {
+      c.fillStyle = '#7a6a5a';
+      c.beginPath(); c.arc(iconX, iconY, 10, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#ff6600';
+      c.beginPath(); c.arc(iconX - 3, iconY - 2, 2, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(iconX + 3, iconY - 2, 2, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#ffd700';
+      c.beginPath(); c.moveTo(iconX - 7, iconY - 6); c.lineTo(iconX - 3, iconY - 12); c.lineTo(iconX, iconY - 8); c.lineTo(iconX + 3, iconY - 12); c.lineTo(iconX + 7, iconY - 6); c.fill();
+    } else if (bossType === 'cave_serpent') {
+      c.fillStyle = '#6a3090';
+      c.beginPath(); c.arc(iconX, iconY, 10, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#ff0';
+      c.beginPath(); c.arc(iconX - 2, iconY - 2, 3, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#000';
+      c.beginPath(); c.arc(iconX - 1, iconY - 2, 1.5, 0, Math.PI * 2); c.fill();
+    } else {
+      c.fillStyle = '#8b5e3c';
+      c.beginPath(); c.arc(iconX, iconY, 10, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#27ae60';
+      c.beginPath(); c.arc(iconX, iconY + 2, 5, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#1a1a1a';
+      c.beginPath(); c.moveTo(iconX - 6, iconY - 2); c.lineTo(iconX, iconY - 8); c.lineTo(iconX + 6, iconY - 2); c.fill();
+    }
+
     // boss name
     c.font = 'bold 12px monospace';
     c.textAlign = 'center';
     c.fillStyle = '#fff';
     const names = { golem_king: 'GOLEM KING', cave_serpent: 'CAVE SERPENT', sky_pirate: 'SKY PIRATE CAPTAIN' };
-    c.fillText(names[bossType] || 'BOSS', W/2, barY - 6);
+    c.fillText(names[bossType] || 'BOSS', W/2, barY - 4);
 
     // intro overlay
     if (introTimer > 0) {
@@ -5604,204 +6177,722 @@ const BossFight = (() => {
       c.fillText(names[bossType] || 'BOSS', W/2, H/2 + 25);
     }
 
-    // HUD
+    // phase transition flash
+    if (phaseTransTimer > 0) {
+      const flashAlpha = phaseTransTimer > 35 ? (45 - phaseTransTimer) / 10 * 0.8 : phaseTransTimer / 35 * 0.3;
+      c.fillStyle = `rgba(255,255,255,${Math.min(0.8, flashAlpha)})`;
+      c.fillRect(0, 0, W, H);
+      if (phaseTransTimer > 25) {
+        c.font = 'bold 28px monospace';
+        c.textAlign = 'center';
+        c.fillStyle = '#ff0000';
+        c.fillText('PHASE 2!', W/2, H/2);
+      }
+    }
+
     drawHUD();
   }
 
+  // ===================== DRAW GOLEM KING =====================
   function drawGolemKing(c) {
     const sx = boss.x - camera.x;
     const flash = boss.invTimer > 0 && boss.invTimer % 4 < 2;
     const bob = Math.sin(bossTimer * 0.05) * 2;
+    const preGlow = (boss.preAttackGlow || 0) > 0;
+    const stunned = boss.stunTimer > 0;
+    const chargeActive = boss.attackState === 'charge' && (boss.chargeWindup || 0) > 0;
+    const by = boss.y + bob;
+    const cx = sx + boss.w/2;
 
-    // body
-    c.fillStyle = flash ? '#ff8888' : (boss.phase === 2 ? '#6a4a3a' : '#7a6a5a');
-    c.fillRect(sx, boss.y + bob, boss.w, boss.h);
-    // stone texture
-    c.fillStyle = '#0002';
-    for (let i = 0; i < 6; i++) {
-      c.fillRect(sx + (i * 11) % boss.w, boss.y + (i * 17) % boss.h + bob, 8, 6);
-    }
-    // cracks (glow in phase 2)
-    c.strokeStyle = boss.phase === 2 ? '#ff4400' : '#ff880066';
-    c.lineWidth = 2;
+    // ARMS (always drawn)
+    const armRaise = boss.armAngleL || 0;
+    const armColor = flash ? '#ff8888' : (boss.phase === 2 ? '#5a3a2a' : '#6a5a4a');
+    // left arm
+    c.save();
+    c.translate(sx - 2, by + 15);
+    c.rotate(-armRaise * 1.2);
+    c.fillStyle = armColor;
     c.beginPath();
-    c.moveTo(sx + boss.w/2, boss.y + bob);
-    c.lineTo(sx + boss.w/2 - 10, boss.y + boss.h/2 + bob);
-    c.lineTo(sx + boss.w/2 + 5, boss.y + boss.h + bob);
-    c.stroke();
-    // eyes
-    c.fillStyle = boss.phase === 2 ? '#ff2200' : '#ff6600';
-    c.beginPath();
-    c.arc(sx + 18, boss.y + 25 + bob, 6, 0, Math.PI * 2);
-    c.fill();
-    c.beginPath();
-    c.arc(sx + boss.w - 18, boss.y + 25 + bob, 6, 0, Math.PI * 2);
-    c.fill();
-    // crown
-    c.fillStyle = '#ffd700';
-    c.beginPath();
-    c.moveTo(sx + 5, boss.y + bob);
-    c.lineTo(sx + 15, boss.y - 18 + bob);
-    c.lineTo(sx + 25, boss.y - 5 + bob);
-    c.lineTo(sx + boss.w/2, boss.y - 22 + bob);
-    c.lineTo(sx + boss.w - 25, boss.y - 5 + bob);
-    c.lineTo(sx + boss.w - 15, boss.y - 18 + bob);
-    c.lineTo(sx + boss.w - 5, boss.y + bob);
+    c.moveTo(0, 0); c.lineTo(-18, 5); c.lineTo(-20, 35); c.lineTo(-8, 42); c.lineTo(4, 35); c.lineTo(2, 8);
     c.closePath();
     c.fill();
-    // crown gems
-    c.fillStyle = '#e94560';
-    c.beginPath(); c.arc(sx + boss.w/2, boss.y - 14 + bob, 4, 0, Math.PI * 2); c.fill();
+    // fist
+    c.fillStyle = flash ? '#ffaaaa' : '#5a4a3a';
+    c.beginPath(); c.arc(-14, 40, 8, 0, Math.PI * 2); c.fill();
+    c.restore();
+    // right arm
+    c.save();
+    c.translate(sx + boss.w + 2, by + 15);
+    c.rotate((boss.armAngleR || 0) * 1.2);
+    c.fillStyle = armColor;
+    c.beginPath();
+    c.moveTo(0, 0); c.lineTo(18, 5); c.lineTo(20, 35); c.lineTo(8, 42); c.lineTo(-4, 35); c.lineTo(-2, 8);
+    c.closePath();
+    c.fill();
+    c.fillStyle = flash ? '#ffaaaa' : '#5a4a3a';
+    c.beginPath(); c.arc(14, 40, 8, 0, Math.PI * 2); c.fill();
+    c.restore();
 
-    // slam animation — arms raised
-    if (boss.attackState === 'slam' && boss.slamTimer < 40) {
-      const raise = Math.min(1, boss.slamTimer / 30);
-      c.fillStyle = flash ? '#ff8888' : '#7a6a5a';
-      // left arm
-      c.fillRect(sx - 15, boss.y + 20 - raise * 40 + bob, 14, 40);
-      // right arm
-      c.fillRect(sx + boss.w + 1, boss.y + 20 - raise * 40 + bob, 14, 40);
+    // LEGS
+    c.fillStyle = flash ? '#ff9999' : (boss.phase === 2 ? '#4a2a1a' : '#5a4a3a');
+    const legBob = Math.sin(bossTimer * 0.08) * 2;
+    // left leg
+    c.beginPath();
+    c.moveTo(sx + 8, by + boss.h - 5);
+    c.lineTo(sx + 2, by + boss.h + 15 + legBob);
+    c.lineTo(sx + 22, by + boss.h + 15 + legBob);
+    c.lineTo(sx + 22, by + boss.h - 5);
+    c.closePath();
+    c.fill();
+    // right leg
+    c.beginPath();
+    c.moveTo(sx + boss.w - 8, by + boss.h - 5);
+    c.lineTo(sx + boss.w - 22, by + boss.h + 15 - legBob);
+    c.lineTo(sx + boss.w - 2, by + boss.h + 15 - legBob);
+    c.lineTo(sx + boss.w - 2, by + boss.h - 5);
+    c.closePath();
+    c.fill();
+    // feet
+    c.fillStyle = flash ? '#ffaaaa' : '#4a3a2a';
+    c.fillRect(sx - 2, by + boss.h + 12 + legBob, 28, 6);
+    c.fillRect(sx + boss.w - 26, by + boss.h + 12 - legBob, 28, 6);
+
+    // BODY (rounded boulder shape)
+    c.save();
+    c.translate(cx, by + boss.h/2);
+    // charge glow
+    if (chargeActive) {
+      const glowIntensity = (boss.chargeWindup / 30);
+      c.fillStyle = `rgba(255,0,0,${glowIntensity * 0.3})`;
+      c.beginPath(); c.arc(0, 0, boss.w * 0.6 + 8, 0, Math.PI * 2); c.fill();
+    }
+    // pre-attack glow
+    if (preGlow) {
+      c.fillStyle = 'rgba(255,200,100,0.25)';
+      c.beginPath(); c.arc(0, 0, boss.w * 0.55 + 5, 0, Math.PI * 2); c.fill();
+    }
+    // stun stars
+    if (stunned) {
+      for (let i = 0; i < 3; i++) {
+        const sa = bossTimer * 0.1 + i * 2.1;
+        c.fillStyle = '#ffff00';
+        c.font = '12px monospace';
+        c.fillText('★', Math.cos(sa) * 30, -boss.h/2 - 5 + Math.sin(sa * 1.5) * 8);
+      }
+    }
+    // main body shape (rounded)
+    c.fillStyle = flash ? '#ff8888' : (boss.phase === 2 ? '#5a3a2a' : '#7a6a5a');
+    c.beginPath();
+    c.moveTo(-boss.w/2 + 8, -boss.h/2);
+    c.quadraticCurveTo(-boss.w/2 - 4, -boss.h/4, -boss.w/2, 0);
+    c.quadraticCurveTo(-boss.w/2 - 2, boss.h/4, -boss.w/2 + 10, boss.h/2);
+    c.lineTo(boss.w/2 - 10, boss.h/2);
+    c.quadraticCurveTo(boss.w/2 + 2, boss.h/4, boss.w/2, 0);
+    c.quadraticCurveTo(boss.w/2 + 4, -boss.h/4, boss.w/2 - 8, -boss.h/2);
+    c.closePath();
+    c.fill();
+    // stone texture
+    c.fillStyle = '#0002';
+    for (let i = 0; i < 8; i++) {
+      const tx = ((i * 13 + 7) % boss.w) - boss.w/2;
+      const ty = ((i * 19 + 3) % boss.h) - boss.h/2;
+      c.fillRect(tx, ty, 8, 5);
+    }
+    // magma veins (glow in phase 2 with sine wave)
+    const magmaAlpha = boss.phase === 2 ? 0.6 + Math.sin(bossTimer * 0.1) * 0.3 : 0.25;
+    c.strokeStyle = boss.phase === 2 ? `rgba(255,68,0,${magmaAlpha})` : 'rgba(255,136,0,0.25)';
+    c.lineWidth = boss.phase === 2 ? 3 : 2;
+    // vein 1
+    c.beginPath();
+    c.moveTo(0, -boss.h/2 + 5);
+    c.bezierCurveTo(-12, -boss.h/4, 5, 0, -8, boss.h/4);
+    c.lineTo(-3, boss.h/2 - 5);
+    c.stroke();
+    // vein 2
+    c.beginPath();
+    c.moveTo(boss.w/4, -boss.h/3);
+    c.bezierCurveTo(boss.w/3, 0, boss.w/6, boss.h/4, boss.w/4 - 5, boss.h/2 - 8);
+    c.stroke();
+    // vein 3
+    c.beginPath();
+    c.moveTo(-boss.w/4, -boss.h/4);
+    c.bezierCurveTo(-boss.w/3, boss.h/6, -boss.w/5, boss.h/3, -boss.w/4 + 3, boss.h/2 - 6);
+    c.stroke();
+
+    // phase 2: ember particles
+    if (boss.phase === 2 && bossTimer % 6 === 0) {
+      spawnParticles(boss.x + Math.random() * boss.w, boss.y + Math.random() * boss.h/2, 1, '#ff4400', { spread: 2, life: 15, gravity: -0.15, size: 2 });
+    }
+
+    // FACE
+    // eye sockets
+    c.fillStyle = '#2a1a0a';
+    c.beginPath(); c.arc(-14, -10, 9, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(14, -10, 9, 0, Math.PI * 2); c.fill();
+    // ember eyes
+    const eyeGlow = boss.phase === 2 ? 0.8 + Math.sin(bossTimer * 0.15) * 0.2 : 0.6;
+    c.fillStyle = boss.phase === 2 ? `rgba(255,34,0,${eyeGlow})` : `rgba(255,102,0,${eyeGlow})`;
+    c.beginPath(); c.arc(-14, -10, 6, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(14, -10, 6, 0, Math.PI * 2); c.fill();
+    // eye glow
+    c.fillStyle = '#ffcc00';
+    c.beginPath(); c.arc(-15, -12, 2, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(13, -12, 2, 0, Math.PI * 2); c.fill();
+
+    // crack-line mouth
+    const mouthOpen = boss.mouthOpen || 0;
+    c.strokeStyle = boss.phase === 2 ? '#ff4400' : '#ff8800';
+    c.lineWidth = 2;
+    c.beginPath();
+    c.moveTo(-15, 10);
+    c.lineTo(-8, 12 + mouthOpen * 8);
+    c.lineTo(0, 8 + mouthOpen * 4);
+    c.lineTo(8, 12 + mouthOpen * 8);
+    c.lineTo(15, 10);
+    c.stroke();
+    if (mouthOpen > 0.3) {
+      c.fillStyle = '#ff2200';
+      c.beginPath();
+      c.moveTo(-10, 11); c.lineTo(-5, 13 + mouthOpen * 6); c.lineTo(0, 9 + mouthOpen * 3);
+      c.lineTo(5, 13 + mouthOpen * 6); c.lineTo(10, 11);
+      c.closePath();
+      c.fill();
+    }
+
+    c.restore();
+
+    // CROWN (detailed with 3 gem colors)
+    c.fillStyle = '#ffd700';
+    c.beginPath();
+    c.moveTo(sx + 3, by);
+    c.lineTo(sx + 12, by - 20);
+    c.lineTo(sx + 22, by - 6);
+    c.lineTo(sx + boss.w/2, by - 24);
+    c.lineTo(sx + boss.w - 22, by - 6);
+    c.lineTo(sx + boss.w - 12, by - 20);
+    c.lineTo(sx + boss.w - 3, by);
+    c.closePath();
+    c.fill();
+    c.strokeStyle = '#b8960f';
+    c.lineWidth = 1.5;
+    c.stroke();
+    // gems: red, blue, green
+    c.fillStyle = '#e94560';
+    c.beginPath(); c.arc(cx, by - 16, 4, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#3498db';
+    c.beginPath(); c.arc(sx + 15, by - 12, 3, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#2ecc71';
+    c.beginPath(); c.arc(sx + boss.w - 15, by - 12, 3, 0, Math.PI * 2); c.fill();
+
+    // charge telegraph: "!" above head
+    if (chargeActive && boss.chargeWindup <= 30) {
+      c.font = 'bold 24px monospace';
+      c.textAlign = 'center';
+      c.fillStyle = `rgba(255,0,0,${0.5 + Math.sin(bossTimer * 0.5) * 0.5})`;
+      c.fillText('!', cx, by - 35);
     }
   }
 
+  // =================== DRAW CAVE SERPENT ===================
   function drawCaveSerpent(c) {
     const flash = boss.invTimer > 0 && boss.invTimer % 4 < 2;
-    // body segments
-    for (let i = boss.segments.length - 1; i >= 0; i--) {
+    const preGlow = (boss.preAttackGlow || 0) > 0;
+    const totalSegs = boss.segments.length;
+
+    // coil ground warning
+    if (boss.attackState === 'coil' && boss.slamTimer <= 90) {
+      const wx = boss.coilCenterX - camera.x;
+      const wy = boss.coilCenterY;
+      c.strokeStyle = `rgba(255,0,0,${0.2 + Math.sin(bossTimer * 0.3) * 0.15})`;
+      c.lineWidth = 2;
+      c.beginPath();
+      c.arc(wx, wy, boss.coilRadius, 0, Math.PI * 2);
+      c.stroke();
+    }
+
+    // tailwhip visual
+    if (boss.tailWhipTimer > 0 && boss.tailWhipTimer >= 20 && boss.tailWhipTimer <= 40) {
+      const progress = (boss.tailWhipTimer - 20) / 20;
+      const sweepX = arenaX + progress * arenaWidth - camera.x;
+      c.strokeStyle = 'rgba(100,255,100,0.4)';
+      c.lineWidth = 6;
+      c.beginPath();
+      c.moveTo(sweepX - 30, H - 50);
+      c.lineTo(sweepX + 30, H - 50);
+      c.stroke();
+      c.fillStyle = 'rgba(100,255,100,0.15)';
+      c.fillRect(sweepX - 40, H - 55, 80, 15);
+    }
+
+    // body segments with gradient and scale pattern
+    for (let i = totalSegs - 1; i >= 0; i--) {
       const seg = boss.segments[i];
       const ssx = seg.x - camera.x;
-      const r = 14 - i * 1;
-      c.fillStyle = `rgba(${flash ? 255 : 80},${flash ? 100 : 40},${flash ? 100 : 120},${1 - i * 0.1})`;
+      const r = 16 - i * 0.8;
+      const colorT = i / totalSegs;
+      // gradient: dark purple (tail) to vibrant green (head)
+      const red = flash ? 255 : Math.floor(80 - colorT * 40);
+      const green = flash ? 100 : Math.floor(40 + colorT * 80);
+      const blue = flash ? 100 : Math.floor(120 - colorT * 80);
+      c.fillStyle = `rgb(${red},${green},${blue})`;
       c.beginPath();
       c.arc(ssx, seg.y, r, 0, Math.PI * 2);
       c.fill();
+      // scale pattern (overlapping arcs on top)
+      c.strokeStyle = `rgba(${red + 30},${green + 30},${blue + 30},0.4)`;
+      c.lineWidth = 1;
+      for (let s = 0; s < 3; s++) {
+        const sa = (s / 3) * Math.PI * 2 + bossTimer * 0.02;
+        c.beginPath();
+        c.arc(ssx + Math.cos(sa) * r * 0.4, seg.y + Math.sin(sa) * r * 0.4, r * 0.35, 0, Math.PI);
+        c.stroke();
+      }
+      // fin ridge on top
+      c.fillStyle = `rgba(${red + 40},${green + 60},${blue},0.7)`;
+      c.beginPath();
+      c.moveTo(ssx - r * 0.3, seg.y - r);
+      c.lineTo(ssx, seg.y - r - 6);
+      c.lineTo(ssx + r * 0.3, seg.y - r);
+      c.closePath();
+      c.fill();
+      // glowing underbelly
+      const bellyGlow = (boss.attackState !== 'idle') ? 0.5 : 0.2;
+      c.fillStyle = `rgba(100,255,150,${bellyGlow})`;
+      c.beginPath();
+      c.arc(ssx, seg.y + r * 0.3, r * 0.6, 0, Math.PI);
+      c.fill();
+      // phase 2: bioluminescent pulse
+      if (boss.phase === 2) {
+        const pulseAlpha = 0.15 + Math.sin(bossTimer * 0.1 + i * 0.5) * 0.1;
+        c.fillStyle = `rgba(100,255,200,${pulseAlpha})`;
+        c.beginPath();
+        c.arc(ssx, seg.y, r + 4, 0, Math.PI * 2);
+        c.fill();
+      }
       c.strokeStyle = '#2a1040';
       c.lineWidth = 1;
+      c.beginPath();
+      c.arc(ssx, seg.y, r, 0, Math.PI * 2);
       c.stroke();
     }
-    // head
+
+    // HEAD (larger, with jaw)
     const sx = boss.x - camera.x;
+    const headR = 22;
+    const jawAngle = boss.jawOpen || 0;
+
+    // pre-attack glow
+    if (preGlow) {
+      c.fillStyle = 'rgba(100,255,100,0.25)';
+      c.beginPath(); c.arc(sx + boss.w/2, boss.y + boss.h/2, headR + 8, 0, Math.PI * 2); c.fill();
+    }
+
+    // head body
     c.fillStyle = flash ? '#ff6666' : '#6a3090';
     c.beginPath();
-    c.moveTo(sx + boss.w/2 + 20, boss.y + boss.h/2);
-    c.lineTo(sx, boss.y);
-    c.lineTo(sx, boss.y + boss.h);
+    c.arc(sx + boss.w/2, boss.y + boss.h/2, headR, 0, Math.PI * 2);
+    c.fill();
+
+    // upper jaw / snout
+    c.fillStyle = flash ? '#ff8888' : '#7a40a0';
+    c.beginPath();
+    c.moveTo(sx + boss.w/2 + headR, boss.y + boss.h/2 - 2);
+    c.lineTo(sx + boss.w/2 + headR + 18, boss.y + boss.h/2 - 4 - jawAngle * 6);
+    c.lineTo(sx + boss.w/2 + headR + 5, boss.y + boss.h/2 + 2);
     c.closePath();
     c.fill();
-    // eye
-    c.fillStyle = '#ff0';
+
+    // lower jaw (opens during spit)
+    c.fillStyle = flash ? '#ff8888' : '#5a2070';
     c.beginPath();
-    c.arc(sx + 12, boss.y + boss.h/2 - 5, 5, 0, Math.PI * 2);
+    c.moveTo(sx + boss.w/2 + headR, boss.y + boss.h/2 + 2);
+    c.lineTo(sx + boss.w/2 + headR + 16, boss.y + boss.h/2 + 4 + jawAngle * 8);
+    c.lineTo(sx + boss.w/2 + headR + 3, boss.y + boss.h/2 + 6);
+    c.closePath();
+    c.fill();
+
+    // eyes (larger with slit pupils that track player)
+    const eyeX = sx + boss.w/2 - 4;
+    const eyeY = boss.y + boss.h/2 - 8;
+    c.fillStyle = '#ffee00';
+    c.beginPath();
+    c.ellipse(eyeX, eyeY, 7, 9, 0, 0, Math.PI * 2);
+    c.fill();
+    // slit pupil tracking player
+    const pDirX = Math.sign(player.x - boss.x) * 2;
+    const pDirY = Math.sign(player.y - boss.y) * 1;
+    c.fillStyle = '#000';
+    c.beginPath();
+    c.ellipse(eyeX + pDirX, eyeY + pDirY, 2, 7, 0, 0, Math.PI * 2);
+    c.fill();
+    // second eye
+    c.fillStyle = '#ffee00';
+    c.beginPath();
+    c.ellipse(eyeX + 12, eyeY + 2, 6, 8, 0, 0, Math.PI * 2);
     c.fill();
     c.fillStyle = '#000';
     c.beginPath();
-    c.arc(sx + 13, boss.y + boss.h/2 - 5, 2, 0, Math.PI * 2);
+    c.ellipse(eyeX + 12 + pDirX, eyeY + 2 + pDirY, 1.5, 6, 0, 0, Math.PI * 2);
     c.fill();
-    // fangs
+
+    // fangs (longer, drip acid)
     c.fillStyle = '#fff';
+    const fangX = sx + boss.w/2 + headR + 8;
+    const fangY = boss.y + boss.h/2;
     c.beginPath();
-    c.moveTo(sx + boss.w/2 + 10, boss.y + boss.h/2 - 3);
-    c.lineTo(sx + boss.w/2 + 18, boss.y + boss.h/2 + 5);
-    c.lineTo(sx + boss.w/2 + 5, boss.y + boss.h/2 + 2);
+    c.moveTo(fangX, fangY - 2);
+    c.lineTo(fangX + 3, fangY + 14);
+    c.lineTo(fangX - 3, fangY + 2);
+    c.closePath();
     c.fill();
+    c.beginPath();
+    c.moveTo(fangX + 6, fangY);
+    c.lineTo(fangX + 9, fangY + 12);
+    c.lineTo(fangX + 3, fangY + 3);
+    c.closePath();
+    c.fill();
+    // acid drip
+    if (bossTimer % 20 < 10) {
+      c.fillStyle = '#44ff44';
+      c.beginPath();
+      c.arc(fangX + 2, fangY + 16 + (bossTimer % 10), 2, 0, Math.PI * 2);
+      c.fill();
+    }
+
     // burst warning
     if (boss.diving && boss.burstTimer > 30 && boss.burstTimer < 50) {
       const wx = boss.burstX - camera.x;
       c.fillStyle = `rgba(255,0,0,${Math.sin(boss.burstTimer * 0.5) * 0.5 + 0.3})`;
-      c.fillRect(wx - 20, H - 50, 40, 10);
-      c.font = 'bold 16px monospace';
+      c.fillRect(wx - 25, H - 52, 50, 12);
+      c.font = 'bold 18px monospace';
       c.textAlign = 'center';
-      c.fillText('!', wx, H - 55);
+      c.fillStyle = '#ff0000';
+      c.fillText('!', wx, H - 58);
     }
   }
 
+  // =================== DRAW SKY PIRATE ===================
   function drawSkyPirate(c) {
     const sx = boss.x - camera.x;
     const flash = boss.invTimer > 0 && boss.invTimer % 4 < 2;
     const bob = Math.sin(bossTimer * 0.02) * 3;
+    const preGlow = (boss.preAttackGlow || 0) > 0;
 
-    // ship hull
+    c.save();
+    c.translate(sx + boss.w/2, boss.y + boss.h/2 + bob);
+    c.rotate(boss.tilt || 0);
+    c.translate(-boss.w/2, -boss.h/2);
+
+    // SHIP HULL (bezier curve shape)
     c.fillStyle = flash ? '#cc8844' : '#8b5e3c';
     c.beginPath();
-    c.moveTo(sx - 10, boss.y + bob);
-    c.lineTo(sx + boss.w + 10, boss.y + bob);
-    c.lineTo(sx + boss.w - 10, boss.y + boss.h + bob);
-    c.lineTo(sx + 10, boss.y + boss.h + bob);
+    c.moveTo(-15, 0);
+    c.bezierCurveTo(-5, -8, boss.w + 5, -8, boss.w + 15, 0);
+    c.bezierCurveTo(boss.w + 5, boss.h + 5, -5, boss.h + 5, -15, 0);
     c.closePath();
     c.fill();
-    // deck
-    c.fillStyle = '#a07040';
-    c.fillRect(sx, boss.y + bob, boss.w, 8);
-    // planks
+    // hull outline
     c.strokeStyle = '#6b4020';
+    c.lineWidth = 1.5;
+    c.stroke();
+
+    // planking texture
+    c.strokeStyle = 'rgba(107,64,32,0.4)';
     c.lineWidth = 1;
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 8; i++) {
+      const px = i * (boss.w / 7) - 5;
       c.beginPath();
-      c.moveTo(sx + 10 + i * 40, boss.y + 8 + bob);
-      c.lineTo(sx + 10 + i * 40, boss.y + boss.h + bob);
+      c.moveTo(px, 3);
+      c.lineTo(px, boss.h - 3);
       c.stroke();
     }
-    // mast
-    c.fillStyle = '#5a3520';
-    c.fillRect(sx + boss.w/2 - 3, boss.y - 60 + bob, 6, 60);
-    // flag
-    c.fillStyle = '#1a1a1a';
-    c.fillRect(sx + boss.w/2 + 3, boss.y - 58 + bob, 30, 20);
-    // skull on flag
-    c.fillStyle = '#fff';
-    c.beginPath();
-    c.arc(sx + boss.w/2 + 18, boss.y - 50 + bob, 5, 0, Math.PI * 2);
-    c.fill();
 
-    // captain (apple pirate style, bigger)
-    const capX = sx + boss.captainX;
-    const capY = boss.y + boss.captainY + bob;
-    c.fillStyle = flash ? '#88ff88' : '#27ae60';
+    // deck
+    c.fillStyle = '#a07040';
+    c.fillRect(-5, 0, boss.w + 10, 6);
+    c.strokeStyle = '#6b4020';
+    c.lineWidth = 0.5;
+    c.strokeRect(-5, 0, boss.w + 10, 6);
+
+    // cannon ports
+    c.fillStyle = '#222';
+    for (let i = 0; i < 4; i++) {
+      c.beginPath();
+      c.arc(20 + i * 45, boss.h/2 + 4, 5, 0, Math.PI * 2);
+      c.fill();
+    }
+
+    // broadside telegraph: cannons extend
+    if (boss.attackState === 'broadside') {
+      const bDir = boss.broadsideDir || 1;
+      c.fillStyle = '#333';
+      for (let i = 0; i < 4; i++) {
+        const cpx = 20 + i * 45;
+        const cpy = boss.h/2 + 4;
+        c.fillRect(bDir > 0 ? cpx + 3 : cpx - 15, cpy - 2, 12, 4);
+      }
+    }
+
+    // MAST 1 (main)
+    c.fillStyle = '#5a3520';
+    c.fillRect(boss.w/2 - 3, -65, 6, 65);
+    // MAST 2 (fore)
+    c.fillRect(boss.w * 0.2 - 2, -45, 5, 45);
+
+    // TATTERED SAILS (triangles with jagged edges)
+    // main sail
+    c.fillStyle = 'rgba(220,210,190,0.85)';
     c.beginPath();
-    c.arc(capX, capY + 14, 14, 0, Math.PI * 2);
-    c.fill();
-    // captain hat
-    c.fillStyle = '#1a1a1a';
-    c.beginPath();
-    c.moveTo(capX - 16, capY + 2);
-    c.lineTo(capX, capY - 16);
-    c.lineTo(capX + 16, capY + 2);
+    c.moveTo(boss.w/2 - 25, -55);
+    c.lineTo(boss.w/2 + 25, -55);
+    const jagY1 = -15 + Math.sin(bossTimer * 0.04) * 3;
+    c.lineTo(boss.w/2 + 20, jagY1);
+    c.lineTo(boss.w/2 + 12, jagY1 - 4);
+    c.lineTo(boss.w/2 + 5, jagY1 + 2);
+    c.lineTo(boss.w/2 - 5, jagY1 - 3);
+    c.lineTo(boss.w/2 - 15, jagY1 + 1);
+    c.lineTo(boss.w/2 - 22, jagY1 - 2);
     c.closePath();
     c.fill();
-    // eye
-    c.fillStyle = '#fff';
-    c.fillRect(capX - 6, capY + 8, 5, 5);
-    c.fillStyle = '#e74c3c';
-    c.fillRect(capX - 5, capY + 9, 3, 3);
-    // eyepatch
-    c.fillStyle = '#1a1a1a';
-    c.fillRect(capX + 3, capY + 8, 6, 5);
+    // fore sail
+    c.fillStyle = 'rgba(200,190,170,0.8)';
+    c.beginPath();
+    c.moveTo(boss.w * 0.2 - 15, -38);
+    c.lineTo(boss.w * 0.2 + 15, -38);
+    const jagY2 = -8 + Math.sin(bossTimer * 0.05 + 1) * 2;
+    c.lineTo(boss.w * 0.2 + 12, jagY2);
+    c.lineTo(boss.w * 0.2 + 4, jagY2 - 3);
+    c.lineTo(boss.w * 0.2 - 6, jagY2 + 1);
+    c.lineTo(boss.w * 0.2 - 13, jagY2 - 2);
+    c.closePath();
+    c.fill();
 
-    // anchor
-    if (boss.anchorActive) {
-      const ax = sx + boss.w/2 + Math.sin(boss.anchorAngle) * boss.anchorLen;
-      const ay = boss.y + boss.h + bob + Math.cos(boss.anchorAngle) * boss.anchorLen;
-      // chain
-      c.strokeStyle = '#888';
+    // phase 2: holes in sails
+    if (boss.phase === 2) {
+      c.fillStyle = level.theme ? level.theme.sky || '#87ceeb' : '#87ceeb';
+      c.beginPath(); c.arc(boss.w/2 - 8, -35, 5, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(boss.w/2 + 10, -45, 4, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(boss.w * 0.2 + 3, -25, 3, 0, Math.PI * 2); c.fill();
+    }
+
+    // crow's nest
+    c.fillStyle = '#5a3520';
+    c.fillRect(boss.w/2 - 10, -68, 20, 5);
+    c.fillRect(boss.w/2 - 12, -70, 2, 8);
+    c.fillRect(boss.w/2 + 10, -70, 2, 8);
+
+    // FLAG (animated wave)
+    c.fillStyle = '#1a1a1a';
+    c.beginPath();
+    const flagX = boss.w/2 + 3;
+    const flagY = -65;
+    c.moveTo(flagX, flagY);
+    for (let i = 0; i <= 30; i++) {
+      const fx = flagX + i;
+      const fy = flagY + Math.sin(bossTimer * 0.08 + i * 0.2) * 3;
+      if (i === 0) c.moveTo(fx, fy);
+      else c.lineTo(fx, fy);
+    }
+    for (let i = 30; i >= 0; i--) {
+      const fx = flagX + i;
+      const fy = flagY + 18 + Math.sin(bossTimer * 0.08 + i * 0.2) * 2;
+      c.lineTo(fx, fy);
+    }
+    c.closePath();
+    c.fill();
+    // skull on flag
+    c.fillStyle = '#ddd';
+    c.beginPath();
+    c.arc(flagX + 15, flagY + 7 + Math.sin(bossTimer * 0.08 + 3) * 2, 5, 0, Math.PI * 2);
+    c.fill();
+    c.fillStyle = '#1a1a1a';
+    c.beginPath();
+    c.arc(flagX + 13, flagY + 6 + Math.sin(bossTimer * 0.08 + 3) * 2, 1.5, 0, Math.PI * 2);
+    c.fill();
+    c.beginPath();
+    c.arc(flagX + 17, flagY + 6 + Math.sin(bossTimer * 0.08 + 3) * 2, 1.5, 0, Math.PI * 2);
+    c.fill();
+
+    // phase 2: hull damage cracks
+    if (boss.phase === 2) {
+      c.strokeStyle = '#3a2010';
       c.lineWidth = 2;
       c.beginPath();
-      c.moveTo(sx + boss.w/2, boss.y + boss.h + bob);
+      c.moveTo(30, boss.h * 0.3); c.lineTo(45, boss.h * 0.6); c.lineTo(38, boss.h * 0.8);
+      c.stroke();
+      c.beginPath();
+      c.moveTo(boss.w - 40, boss.h * 0.2); c.lineTo(boss.w - 30, boss.h * 0.5);
+      c.stroke();
+    }
+
+    // phase 2: fire particles from hull
+    if (boss.phase === 2 && boss.fireParticles) {
+      for (const fp of boss.fireParticles) {
+        const fpx = fp.x - boss.x;
+        const fpy = fp.y - boss.y - bob;
+        const fa = fp.life / 20;
+        c.fillStyle = `rgba(255,${Math.floor(100 + fp.life * 5)},0,${fa * 0.7})`;
+        c.beginPath();
+        c.arc(fpx, fpy, 3 + (20 - fp.life) * 0.15, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+
+    // CAPTAIN (larger, detailed)
+    const capRelX = boss.captainX;
+    const capRelY = boss.captainY;
+    // body / coat
+    c.fillStyle = flash ? '#88ff88' : '#c0392b';
+    c.beginPath();
+    c.moveTo(capRelX - 10, capRelY + 24);
+    c.lineTo(capRelX - 14, capRelY + 38);
+    c.lineTo(capRelX + 14, capRelY + 38);
+    c.lineTo(capRelX + 10, capRelY + 24);
+    c.closePath();
+    c.fill();
+    // coat flare
+    c.fillStyle = flash ? '#99ff99' : '#922';
+    c.beginPath();
+    c.moveTo(capRelX - 14, capRelY + 38);
+    c.lineTo(capRelX - 18, capRelY + 42);
+    c.lineTo(capRelX - 6, capRelY + 38);
+    c.closePath();
+    c.fill();
+    c.beginPath();
+    c.moveTo(capRelX + 14, capRelY + 38);
+    c.lineTo(capRelX + 18, capRelY + 42);
+    c.lineTo(capRelX + 6, capRelY + 38);
+    c.closePath();
+    c.fill();
+
+    // head
+    c.fillStyle = flash ? '#88ff88' : '#27ae60';
+    c.beginPath();
+    c.arc(capRelX, capRelY + 14, 14, 0, Math.PI * 2);
+    c.fill();
+    // hat (tricorne)
+    c.fillStyle = '#1a1a1a';
+    c.beginPath();
+    c.moveTo(capRelX - 18, capRelY + 3);
+    c.lineTo(capRelX - 8, capRelY - 6);
+    c.lineTo(capRelX, capRelY - 18);
+    c.lineTo(capRelX + 8, capRelY - 6);
+    c.lineTo(capRelX + 18, capRelY + 3);
+    c.lineTo(capRelX + 10, capRelY + 5);
+    c.lineTo(capRelX - 10, capRelY + 5);
+    c.closePath();
+    c.fill();
+    // hat brim detail
+    c.strokeStyle = '#ffd700';
+    c.lineWidth = 1;
+    c.beginPath();
+    c.moveTo(capRelX - 16, capRelY + 3);
+    c.lineTo(capRelX + 16, capRelY + 3);
+    c.stroke();
+    // skull badge
+    c.fillStyle = '#ddd';
+    c.beginPath(); c.arc(capRelX, capRelY - 8, 3, 0, Math.PI * 2); c.fill();
+
+    // face
+    c.fillStyle = '#fff';
+    c.fillRect(capRelX - 7, capRelY + 8, 6, 6);
+    c.fillStyle = '#e74c3c';
+    c.fillRect(capRelX - 6, capRelY + 9, 4, 4);
+    // eyepatch
+    c.fillStyle = '#1a1a1a';
+    c.fillRect(capRelX + 2, capRelY + 8, 7, 6);
+    c.strokeStyle = '#333';
+    c.lineWidth = 1;
+    c.beginPath();
+    c.moveTo(capRelX + 5, capRelY + 5);
+    c.lineTo(capRelX + 5, capRelY + 8);
+    c.stroke();
+    // scar
+    c.strokeStyle = '#922';
+    c.lineWidth = 1;
+    c.beginPath();
+    c.moveTo(capRelX + 3, capRelY + 16);
+    c.lineTo(capRelX + 8, capRelY + 22);
+    c.stroke();
+
+    // cutlass in hand
+    c.strokeStyle = '#ccc';
+    c.lineWidth = 2;
+    c.beginPath();
+    c.moveTo(capRelX + 14, capRelY + 28);
+    c.lineTo(capRelX + 24, capRelY + 18);
+    c.stroke();
+    // cutlass guard
+    c.strokeStyle = '#ffd700';
+    c.lineWidth = 1.5;
+    c.beginPath();
+    c.moveTo(capRelX + 12, capRelY + 26);
+    c.lineTo(capRelX + 18, capRelY + 30);
+    c.stroke();
+
+    c.restore();
+
+    // ANCHOR (drawn outside transform)
+    if (boss.anchorActive) {
+      const shipCX = sx + boss.w/2;
+      const shipBottom = boss.y + boss.h + bob;
+      const ax = shipCX + Math.sin(boss.anchorAngle) * boss.anchorLen;
+      const ay = shipBottom + Math.cos(boss.anchorAngle) * boss.anchorLen;
+      // chain (segmented)
+      c.strokeStyle = '#888';
+      c.lineWidth = 2;
+      c.setLineDash([6, 3]);
+      c.beginPath();
+      c.moveTo(shipCX, shipBottom);
       c.lineTo(ax, ay);
       c.stroke();
-      // anchor
+      c.setLineDash([]);
+      // anchor shape (proper)
+      c.fillStyle = '#555';
+      // shank
+      c.fillRect(ax - 2, ay - 20, 4, 20);
+      // ring
+      c.strokeStyle = '#666';
+      c.lineWidth = 2;
+      c.beginPath();
+      c.arc(ax, ay - 22, 5, 0, Math.PI * 2);
+      c.stroke();
+      // crown / arms
+      c.strokeStyle = '#555';
+      c.lineWidth = 3;
+      c.beginPath();
+      c.moveTo(ax - 14, ay - 5);
+      c.quadraticCurveTo(ax - 14, ay + 8, ax, ay);
+      c.quadraticCurveTo(ax + 14, ay + 8, ax + 14, ay - 5);
+      c.stroke();
+      // flukes (points)
       c.fillStyle = '#555';
       c.beginPath();
-      c.arc(ax, ay, 10, 0, Math.PI * 2);
-      c.fill();
-      c.fillRect(ax - 2, ay - 15, 4, 15);
+      c.moveTo(ax - 14, ay - 5); c.lineTo(ax - 18, ay - 10); c.lineTo(ax - 10, ay - 6);
+      c.closePath(); c.fill();
+      c.beginPath();
+      c.moveTo(ax + 14, ay - 5); c.lineTo(ax + 18, ay - 10); c.lineTo(ax + 10, ay - 6);
+      c.closePath(); c.fill();
     }
 
     // cannon (during cannon attack)
     if (boss.attackState === 'cannon' && boss.slamTimer < 20) {
       const dir = player.x < boss.x + boss.w/2 ? -1 : 1;
       c.fillStyle = '#333';
-      const cannonX = dir > 0 ? sx + boss.w : sx;
-      c.fillRect(cannonX, boss.y + boss.h/2 - 4 + bob, dir * 20, 8);
+      const cannonX = dir > 0 ? sx + boss.w + 5 : sx - 25;
+      c.fillRect(cannonX, boss.y + boss.h/2 - 5 + bob, 20, 10);
+      c.fillStyle = '#222';
+      c.beginPath();
+      c.arc(cannonX + (dir > 0 ? 20 : 0), boss.y + boss.h/2 + bob, 6, 0, Math.PI * 2);
+      c.fill();
+    }
+
+    // pre-attack glow
+    if (preGlow) {
+      c.fillStyle = 'rgba(255,200,100,0.15)';
+      c.beginPath();
+      c.arc(sx + boss.w/2, boss.y + boss.h/2 + bob, boss.w * 0.4, 0, Math.PI * 2);
+      c.fill();
     }
   }
 
